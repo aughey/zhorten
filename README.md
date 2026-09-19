@@ -18,7 +18,7 @@ The included scripts build the browser and server halves without depending on a 
 
 The same settings can be supplied as `ZHORTEN_USERNAME`, `ZHORTEN_PASSWORD`, `ZHORTEN_DB`, and `ZHORTEN_ADDR`.
 
-Short URLs use `/z/:code`. Each redirect atomically updates its total and stores a compact timestamped click event in sled. Admin sessions live in memory and expire via their one-day cookie or when the server restarts.
+Short URLs use `/z/:code`. For compatibility with legacy YOURLS links, `/:code` resolves the same records. Each redirect atomically updates its total and stores a compact timestamped click event in sled. Admin sessions live in memory and expire via their one-day cookie or when the server restarts.
 
 For production, put the server behind an HTTPS reverse proxy. The admin password is intentionally supplied at startup and is never written to the database.
 

@@ -272,7 +272,7 @@ fn Dashboard(
                 </section>
                 <section class="creator-card">
                     <form on:submit=create>
-                        <label class="code-field"><span>"SHORT CODE"</span><div class="input-prefix"><span>"/z/"</span><input placeholder="launch" pattern="[A-Za-z0-9_-]+" minlength="2" maxlength="32" required prop:value=code on:input=move |e| set_code.set(event_target_value(&e))/></div></label>
+                        <label class="code-field"><span>"SHORT CODE"</span><div class="input-prefix"><span>"/z/"</span><input placeholder="launch" pattern="[A-Za-z0-9_-]+" minlength="1" maxlength="32" required prop:value=code on:input=move |e| set_code.set(event_target_value(&e))/></div></label>
                         <label class="url-field"><span>"DESTINATION URL"</span><input type="url" placeholder="https://example.com/long-address" required prop:value=url on:input=move |e| set_url.set(event_target_value(&e))/></label>
                         <button class="button" type="submit" disabled=move || busy.get()>{move || if busy.get() { "Creating…" } else { "Create link" }}</button>
                     </form>

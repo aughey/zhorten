@@ -19,7 +19,10 @@ use std::{
     sync::{Arc, RwLock},
 };
 use time::OffsetDateTime;
-use tower_http::{services::ServeDir, trace::TraceLayer};
+use tower_http::{
+    services::{ServeDir, ServeFile},
+    trace::TraceLayer,
+};
 use zhorten::{App, DashboardData, LinkRecord};
 
 #[derive(Parser, Debug)]
@@ -92,8 +95,11 @@ async fn main() {
     };
     let routes = generate_route_list(App);
 
+    let stylesheet = std::path::PathBuf::from(leptos_options.site_root.as_ref()).join("style.css");
     let app = Router::new()
         .route("/z/{code}", get(follow_link))
+        .route("/{code}", get(follow_link))
+        .route_service("/style.css", ServeFile::new(stylesheet))
         .route("/api/login", post(login))
         .route("/api/logout", post(logout))
         .route("/api/links", get(list_links).post(create_link))
@@ -216,7 +222,7 @@ async fn create_link(
     if !authorized(&state, &headers) {
         return unauthorized();
     }
-    if body.code.len() < 2
+    if body.code.is_empty()
         || body.code.len() > 32
         || !body
             .code
@@ -226,7 +232,7 @@ async fn create_link(
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorBody {
-                error: "Code must be 2–32 letters, numbers, dashes, or underscores.".into(),
+                error: "Code must be 1–32 letters, numbers, dashes, or underscores.".into(),
             }),
         ));
     }
