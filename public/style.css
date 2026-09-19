@@ -44,7 +44,7 @@ header { height:76px; border-bottom:1px solid var(--line); display:flex; align-i
 .section-head h2 { font-size:18px; letter-spacing:-.025em; }
 .pill { background:var(--mint); color:var(--green); border-radius:99px; padding:5px 8px; font:500 9px DM Mono,monospace; letter-spacing:.08em; }
 .link-list { border-top:1px solid var(--line); }
-.link-row { display:grid; grid-template-columns:minmax(0,1fr) 90px 120px 38px; align-items:center; gap:26px; min-height:96px; border-bottom:1px solid var(--line); }
+.link-row { display:grid; grid-template-columns:minmax(0,1fr) 90px 120px auto; align-items:center; gap:26px; min-height:96px; border-bottom:1px solid var(--line); }
 .link-main { min-width:0; display:grid; gap:7px; }
 .short-link { color:var(--green); font:500 15px DM Mono,monospace; text-decoration:none; }
 .short-link span { margin-left:7px; font-family:Manrope; }
@@ -54,6 +54,19 @@ header { height:76px; border-bottom:1px solid var(--line); display:flex; align-i
 .click-count span,.created time { font-size:11px; color:var(--muted); }
 .icon-button { width:34px; height:34px; border:1px solid var(--line); border-radius:9px; background:white; cursor:pointer; color:#89958f; font-size:20px; }
 .icon-button:hover { border-color:#e2bcbc; color:var(--red); background:#fff7f7; }
+.row-actions { display:flex; align-items:center; justify-content:flex-end; gap:7px; }
+.action-button { height:34px; border:1px solid var(--line); border-radius:9px; background:white; padding:0 10px; color:#52615b; font:500 11px DM Mono,monospace; cursor:pointer; }
+.action-button:hover { border-color:#8bb8a5; color:var(--green); background:#f5fbf8; }
+.modal-backdrop { position:fixed; z-index:50; inset:0; display:grid; place-items:center; padding:20px; background:#12201bc4; backdrop-filter:blur(6px); }
+.qr-modal { width:min(420px,100%); padding:26px; border-radius:22px; background:white; box-shadow:0 30px 90px #07130f66; }
+.modal-head { display:flex; align-items:flex-start; justify-content:space-between; gap:20px; }
+.modal-head h3 { margin:7px 0 0; color:var(--green); font:500 17px DM Mono,monospace; }
+.qr-code { display:grid; place-items:center; margin:24px auto 14px; }
+.qr-code svg { display:block; width:min(280px,100%); height:auto; border-radius:10px; }
+.qr-url { margin:0; padding:10px 12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; border:1px solid var(--line); border-radius:9px; background:var(--paper); color:var(--muted); font:11px DM Mono,monospace; }
+.modal-actions { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:16px; }
+.secondary-button { display:grid; place-items:center; background:white; color:var(--ink); border:1px solid var(--line); text-decoration:none; }
+.secondary-button:hover { background:var(--paper); color:var(--green); }
 .empty { text-align:center; padding:70px 20px; color:var(--muted); }
 .empty > span { font-size:30px; color:#9bb8ab; }
 .empty h3 { color:var(--ink); margin:12px 0 4px; }
@@ -61,6 +74,5 @@ header { height:76px; border-bottom:1px solid var(--line); display:flex; align-i
 footer { border-top:1px solid var(--line); padding:22px; text-align:center; color:#94a19b; font:10px DM Mono,monospace; letter-spacing:.12em; }
 .spinner { width:30px;height:30px;border:2px solid var(--line);border-top-color:var(--green);border-radius:50%;animation:spin .8s linear infinite; }
 @keyframes spin { to { transform:rotate(360deg) } }
-@media (max-width:780px) { .creator-card form { grid-template-columns:1fr; } .link-row { grid-template-columns:1fr 60px 34px; padding:18px 0; gap:14px; } .created { display:none; } .hero-row { align-items:start; } .dashboard { padding-top:48px; } }
+@media (max-width:780px) { .creator-card form { grid-template-columns:1fr; } .link-row { grid-template-columns:minmax(0,1fr) 60px; padding:18px 0; gap:14px; } .created { display:none; } .row-actions { grid-column:1/-1; justify-content:flex-start; } .hero-row { align-items:start; } .dashboard { padding-top:48px; } }
 @media (max-width:520px) { .hero-row { display:block; } .stat { text-align:left; margin-top:20px; } .dashboard { width:min(100% - 28px,1120px); } header { padding:0 16px; } .login-card { padding:28px 22px; } }
-

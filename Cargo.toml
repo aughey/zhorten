@@ -17,11 +17,12 @@ leptos_meta = "0.8"
 leptos_router = { version = "0.8", features = ["nightly"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 console_error_panic_hook = { version = "0.1", optional = true }
 js-sys = { version = "0.3", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
-web-sys = { version = "0.3", optional = true, features = ["Headers", "Request", "RequestInit", "RequestMode", "Response", "Window"] }
+web-sys = { version = "0.3", optional = true, features = ["Clipboard", "Headers", "Location", "Navigator", "Request", "RequestInit", "RequestMode", "Response", "Window"] }
 
 axum = { version = "0.8", optional = true, features = ["macros"] }
 clap = { version = "4", optional = true, features = ["derive", "env"] }

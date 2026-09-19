@@ -7,6 +7,7 @@ use leptos_router::{
     components::{Route, Router, Routes},
     path,
 };
+use qrcode::{QrCode, render::svg};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -329,9 +330,76 @@ fn LinkRow(
             <div class="link-main"><a class="short-link" href=short_path.clone() target="_blank">{short_path.clone()}<span>"↗"</span></a><span class="destination">{item.url}</span></div>
             <div class="click-count"><strong>{item.clicks}</strong><span>"clicks"</span></div>
             <div class="created"><span>"CREATED"</span><time>{format_date(item.created_at)}</time></div>
-            <button class="icon-button danger" title="Delete link" on:click=delete>"×"</button>
+            <div class="row-actions">
+                <LinkTools short_path=short_path.clone()/>
+                <button class="icon-button danger" title="Delete link" aria-label="Delete link" on:click=delete>"×"</button>
+            </div>
         </article>
     }
+}
+
+#[component]
+fn LinkTools(short_path: String) -> impl IntoView {
+    let (show_qr, set_show_qr) = signal(false);
+    let (copied, set_copied) = signal(false);
+    let copy_button_path = short_path.clone();
+    let modal_path = StoredValue::new(short_path.clone());
+
+    view! {
+        <button class="action-button" title="Copy short URL" on:click=move |_| copy_short_url(&copy_button_path, set_copied)>{move || if copied.get() { "Copied" } else { "Copy" }}</button>
+        <button class="action-button" title="Show QR code" on:click=move |_| set_show_qr.set(true)>"QR"</button>
+        <Show when=move || show_qr.get()>
+            <div class="modal-backdrop" role="presentation">
+                <section class="qr-modal" role="dialog" aria-modal="true" aria-label="QR code for short link">
+                    <div class="modal-head">
+                        <div><span class="eyebrow">"SCAN TO TEST"</span><h3>{move || modal_path.get_value()}</h3></div>
+                        <button class="icon-button" aria-label="Close QR code" on:click=move |_| set_show_qr.set(false)>"×"</button>
+                    </div>
+                    <div class="qr-code" inner_html=move || qr_svg(&absolute_short_url(&modal_path.get_value()))></div>
+                    <p class="qr-url">{move || absolute_short_url(&modal_path.get_value())}</p>
+                    <div class="modal-actions">
+                        <button class="button" on:click=move |_| copy_short_url(&modal_path.get_value(), set_copied)>{move || if copied.get() { "Copied to clipboard" } else { "Copy short URL" }}</button>
+                        <a class="button secondary-button" href=move || modal_path.get_value() target="_blank">"Open redirect ↗"</a>
+                    </div>
+                </section>
+            </div>
+        </Show>
+    }
+}
+
+fn copy_short_url(path: &str, set_copied: WriteSignal<bool>) {
+    let url = absolute_short_url(path);
+    #[cfg(feature = "hydrate")]
+    if let Some(window) = web_sys::window() {
+        let promise = window.navigator().clipboard().write_text(&url);
+        leptos::task::spawn_local(async move {
+            if wasm_bindgen_futures::JsFuture::from(promise).await.is_ok() {
+                set_copied.set(true);
+            }
+        });
+    }
+}
+
+fn absolute_short_url(path: &str) -> String {
+    #[cfg(feature = "hydrate")]
+    if let Some(window) = web_sys::window()
+        && let Ok(origin) = window.location().origin()
+    {
+        return format!("{origin}{path}");
+    }
+    path.to_owned()
+}
+
+fn qr_svg(value: &str) -> String {
+    QrCode::new(value.as_bytes())
+        .map(|code| {
+            code.render::<svg::Color>()
+                .min_dimensions(280, 280)
+                .dark_color(svg::Color("#19221f"))
+                .light_color(svg::Color("#ffffff"))
+                .build()
+        })
+        .unwrap_or_else(|_| "<p>Unable to generate QR code.</p>".into())
 }
 
 fn format_date(timestamp: i64) -> String {
