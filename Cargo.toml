@@ -1,0 +1,74 @@
+[package]
+name = "zhorten"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "zhorten"
+path = "src/main.rs"
+required-features = ["ssr"]
+
+[dependencies]
+leptos = { version = "0.8", features = ["nightly"] }
+leptos_meta = "0.8"
+leptos_router = { version = "0.8", features = ["nightly"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+console_error_panic_hook = { version = "0.1", optional = true }
+js-sys = { version = "0.3", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+web-sys = { version = "0.3", optional = true, features = ["Headers", "Request", "RequestInit", "RequestMode", "Response", "Window"] }
+
+axum = { version = "0.8", optional = true, features = ["macros"] }
+clap = { version = "4", optional = true, features = ["derive", "env"] }
+constant_time_eq = { version = "0.4", optional = true }
+http = { version = "1", optional = true }
+leptos_axum = { version = "0.8", optional = true }
+rand = { version = "0.9", optional = true }
+sled = { version = "0.34", optional = true }
+time = { version = "0.3", optional = true, features = ["formatting"] }
+tokio = { version = "1", optional = true, features = ["rt-multi-thread", "macros", "signal"] }
+tower-http = { version = "0.6", optional = true, features = ["fs", "trace"] }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter"] }
+url = { version = "2", optional = true }
+
+[features]
+default = ["ssr"]
+hydrate = ["leptos/hydrate", "dep:console_error_panic_hook", "dep:js-sys", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:web-sys"]
+ssr = [
+  "dep:axum",
+  "dep:clap",
+  "dep:constant_time_eq",
+  "dep:http",
+  "dep:leptos_axum",
+  "dep:rand",
+  "dep:sled",
+  "dep:time",
+  "dep:tokio",
+  "dep:tower-http",
+  "dep:tracing",
+  "dep:tracing-subscriber",
+  "dep:url",
+  "leptos/ssr",
+  "leptos_meta/ssr",
+  "leptos_router/ssr",
+]
+
+[package.metadata.leptos]
+output-name = "zhorten"
+site-root = "target/site"
+site-pkg-dir = "pkg"
+assets-dir = "public"
+site-addr = "127.0.0.1:3000"
+reload-port = 3001
+browserquery = "defaults"
+env = "DEV"
+bin-features = ["ssr"]
+bin-default-features = false
+lib-features = ["hydrate"]
+lib-default-features = false
