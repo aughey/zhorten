@@ -2,5 +2,5 @@
 /data/
 /.test-db/
 /.tools/
+/yourls-urls.txt
 *.log
-
