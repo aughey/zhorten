@@ -35,6 +35,7 @@ header { height:76px; border-bottom:1px solid var(--line); display:flex; align-i
 .stat span { font-size:12px; color:var(--muted); }
 .creator-card { padding:24px; border:1px solid var(--line); background:var(--white); border-radius:18px; box-shadow:0 10px 30px #294b3c0a; }
 .creator-card form { display:grid; grid-template-columns:.7fr 1.8fr auto; align-items:end; gap:14px; }
+.creator-card input::placeholder { color:#a8b3ae; opacity:1; font-weight:400; }
 .input-prefix { display:flex; border:1px solid #cfdad4; border-radius:10px; overflow:hidden; background:white; }
 .input-prefix:focus-within { border-color:#4c9d7d; box-shadow:0 0 0 3px #4c9d7d1c; }
 .input-prefix span { display:flex; align-items:center; padding-left:13px; color:#8a9892; font:13px DM Mono,monospace; }

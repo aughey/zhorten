@@ -272,8 +272,8 @@ fn Dashboard(
                 </section>
                 <section class="creator-card">
                     <form on:submit=create>
-                        <label class="code-field"><span>"SHORT CODE"</span><div class="input-prefix"><span>"/z/"</span><input placeholder="launch" pattern="[A-Za-z0-9_-]+" minlength="1" maxlength="32" required prop:value=code on:input=move |e| set_code.set(event_target_value(&e))/></div></label>
-                        <label class="url-field"><span>"DESTINATION URL"</span><input type="url" placeholder="https://example.com/long-address" required prop:value=url on:input=move |e| set_url.set(event_target_value(&e))/></label>
+                        <label class="code-field"><span>"SHORT CODE"</span><div class="input-prefix"><span>"/z/"</span><input placeholder="example_short_name" pattern="[A-Za-z0-9_-]+" minlength="1" maxlength="32" required prop:value=code on:input=move |e| set_code.set(event_target_value(&e))/></div></label>
+                        <label class="url-field"><span>"DESTINATION URL"</span><input type="url" placeholder="https://example.com/destination" required prop:value=url on:input=move |e| set_url.set(event_target_value(&e))/></label>
                         <button class="button" type="submit" disabled=move || busy.get()>{move || if busy.get() { "Creating…" } else { "Create link" }}</button>
                     </form>
                 </section>
@@ -306,24 +306,36 @@ fn LinkRow(
     let delete = move |_| {
         let code = code_for_delete.clone();
         #[cfg(feature = "hydrate")]
-        leptos::task::spawn_local(async move {
-            let path = format!("/api/links/{code}");
-            match api::<serde_json::Value>("DELETE", &path, None).await {
-                Ok(_) => set_data.update(|state| {
-                    if let Some(d) = state {
-                        let removed_clicks = d
-                            .links
-                            .iter()
-                            .find(|link| link.code == code)
-                            .map(|link| link.clicks)
-                            .unwrap_or(0);
-                        d.links.retain(|l| l.code != code);
-                        d.total_clicks = d.total_clicks.saturating_sub(removed_clicks);
-                    }
-                }),
-                Err(e) => set_error.set(Some(e)),
+        {
+            let confirmed = web_sys::window()
+                .and_then(|window| {
+                    window
+                        .confirm_with_message(&format!("Delete /z/{code}? This cannot be undone."))
+                        .ok()
+                })
+                .unwrap_or(false);
+            if !confirmed {
+                return;
             }
-        });
+            leptos::task::spawn_local(async move {
+                let path = format!("/api/links/{code}");
+                match api::<serde_json::Value>("DELETE", &path, None).await {
+                    Ok(_) => set_data.update(|state| {
+                        if let Some(d) = state {
+                            let removed_clicks = d
+                                .links
+                                .iter()
+                                .find(|link| link.code == code)
+                                .map(|link| link.clicks)
+                                .unwrap_or(0);
+                            d.links.retain(|l| l.code != code);
+                            d.total_clicks = d.total_clicks.saturating_sub(removed_clicks);
+                        }
+                    }),
+                    Err(e) => set_error.set(Some(e)),
+                }
+            });
+        }
     };
     view! {
         <article class="link-row">
