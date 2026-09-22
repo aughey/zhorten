@@ -108,11 +108,18 @@ async fn main() {
     };
     let routes = generate_route_list(App);
 
-    let stylesheet = std::path::PathBuf::from(leptos_options.site_root.as_ref()).join("style.css");
+    let site_root = std::path::PathBuf::from(leptos_options.site_root.as_ref());
+    let stylesheet = site_root.join("style.css");
+    let favicon = site_root.join("favicon.svg");
     let app = Router::new()
         .route("/z/{code}", get(follow_link))
         .route("/{code}", get(follow_link))
         .route_service("/style.css", ServeFile::new(stylesheet))
+        .route_service("/favicon.svg", ServeFile::new(favicon))
+        .route(
+            "/favicon.ico",
+            get(|| async { Redirect::permanent("/favicon.svg") }),
+        )
         .route("/api/login", post(login))
         .route("/api/logout", post(logout))
         .route("/api/links", get(list_links).post(create_link))
@@ -167,6 +174,7 @@ fn shell(options: LeptosOptions) -> impl IntoView {
             <head>
                 <meta charset="utf-8"/>
                 <meta name="viewport" content="width=device-width, initial-scale=1"/>
+                <link rel="icon" type="image/svg+xml" href="/favicon.svg"/>
                 <AutoReload options=options.clone()/>
                 <HydrationScripts options/>
                 <MetaTags/>

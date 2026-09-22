@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && mkdir -p /output/site/pkg \
     && wasm-bindgen --target web --out-dir /output/site/pkg --out-name zhorten \
       target/front/wasm32-unknown-unknown/release/zhorten.wasm \
-    && cp public/style.css /output/site/style.css \
+    && cp public/style.css public/favicon.svg /output/site/ \
     && cargo build --locked --package zhorten --bin zhorten --release \
       --no-default-features --features ssr \
     && cp target/release/zhorten /output/zhorten \

@@ -303,6 +303,7 @@ fn LinkRow(
 ) -> impl IntoView {
     let code_for_delete = item.code.clone();
     let short_path = format!("/z/{}", item.code);
+    let destination = item.url.clone();
     let delete = move |_| {
         let code = code_for_delete.clone();
         #[cfg(feature = "hydrate")]
@@ -339,7 +340,7 @@ fn LinkRow(
     };
     view! {
         <article class="link-row">
-            <div class="link-main"><a class="short-link" href=short_path.clone() target="_blank">{short_path.clone()}<span>"↗"</span></a><span class="destination">{item.url}</span></div>
+            <div class="link-main"><a class="short-link" href=short_path.clone() target="_blank">{short_path.clone()}<span>"↗"</span></a><a class="destination" href=destination.clone() target="_blank" rel="noreferrer">{destination.clone()}</a></div>
             <div class="click-count"><strong>{item.clicks}</strong><span>"clicks"</span></div>
             <div class="created"><span>"CREATED"</span><time>{format_date(item.created_at)}</time></div>
             <div class="row-actions">
