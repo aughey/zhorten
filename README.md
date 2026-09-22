@@ -29,4 +29,6 @@ docker build -t zhorten .
 docker run --rm -p 3000:3000 -v zhorten-data:/data -e ZHORTEN_PASSWORD="choose-a-password" zhorten
 ```
 
+The production image uses a non-root distroless runtime and the binary's built-in health check. It intentionally does not include a shell or package manager.
+
 Pushes to `main` build and publish `ghcr.io/<owner>/<repository>:latest`. Pull requests build the image without publishing it; version tags such as `v1.2.0` also publish semantic-version tags.

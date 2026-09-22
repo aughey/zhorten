@@ -73,3 +73,8 @@ bin-features = ["ssr"]
 bin-default-features = false
 lib-features = ["hydrate"]
 lib-default-features = false
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = "symbols"

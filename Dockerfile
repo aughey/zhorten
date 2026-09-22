@@ -21,21 +21,16 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     && cp public/style.css /output/site/style.css \
     && cargo build --locked --package zhorten --bin zhorten --release \
       --no-default-features --features ssr \
-    && cp target/release/zhorten /output/zhorten
+    && cp target/release/zhorten /output/zhorten \
+    && mkdir -p /output/data
 
-FROM debian:bookworm-slim AS runtime
+FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --system --uid 10001 --create-home zhorten \
-    && mkdir -p /app/site /data \
-    && chown -R zhorten:zhorten /app /data
+COPY --from=builder --chown=10001:10001 /output/zhorten /app/zhorten
+COPY --from=builder --chown=10001:10001 /output/site /app/site
+COPY --from=builder --chown=10001:10001 /output/data /data
 
-COPY --from=builder --chown=zhorten:zhorten /output/zhorten /app/zhorten
-COPY --from=builder --chown=zhorten:zhorten /output/site /app/site
-
-USER zhorten
+USER 10001:10001
 WORKDIR /app
 ENV ZHORTEN_ADDR=0.0.0.0:3000 \
     ZHORTEN_DB=/data/zhorten.db \
@@ -45,5 +40,5 @@ ENV ZHORTEN_ADDR=0.0.0.0:3000 \
 VOLUME ["/data"]
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD curl --fail --silent http://127.0.0.1:3000/ > /dev/null || exit 1
+    CMD ["/app/zhorten", "--healthcheck"]
 ENTRYPOINT ["/app/zhorten"]

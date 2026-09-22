@@ -15,8 +15,10 @@ use rand::{Rng, distr::Alphanumeric};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
-    net::SocketAddr,
+    io::{Read, Write},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream},
     sync::{Arc, RwLock},
+    time::Duration,
 };
 use time::OffsetDateTime;
 use tower_http::{
@@ -38,6 +40,8 @@ struct Args {
     cache_capacity: u64,
     #[arg(long, env = "ZHORTEN_ADDR", default_value = "127.0.0.1:3000")]
     address: SocketAddr,
+    #[arg(long, hide = true)]
+    healthcheck: bool,
 }
 
 #[derive(Clone)]
@@ -78,6 +82,9 @@ async fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
     let args = Args::parse();
+    if args.healthcheck {
+        std::process::exit(if healthy(args.address) { 0 } else { 1 });
+    }
     if args.password.trim().is_empty() {
         eprintln!("error: --password (or ZHORTEN_PASSWORD) must not be empty");
         std::process::exit(2);
@@ -126,6 +133,31 @@ async fn main() {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .expect("server error");
+}
+
+fn healthy(address: SocketAddr) -> bool {
+    let ip = match address.ip() {
+        IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
+        IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ip => ip,
+    };
+    let Ok(mut stream) =
+        TcpStream::connect_timeout(&SocketAddr::new(ip, address.port()), Duration::from_secs(2))
+    else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    if stream
+        .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
+        .is_err()
+    {
+        return false;
+    }
+    let mut response = [0; 12];
+    stream.read(&mut response).is_ok_and(|read| {
+        response[..read].starts_with(b"HTTP/1.1 200")
+            || response[..read].starts_with(b"HTTP/1.0 200")
+    })
 }
 
 fn shell(options: LeptosOptions) -> impl IntoView {
