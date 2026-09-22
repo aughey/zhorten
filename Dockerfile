@@ -7,20 +7,19 @@ RUN rustup target add wasm32-unknown-unknown \
     && cargo install wasm-bindgen-cli --version 0.2.128 --locked
 
 COPY Cargo.toml Cargo.lock ./
-COPY src ./src
+COPY crates ./crates
 COPY public ./public
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --locked --package zhorten --lib --release \
+    cargo build --locked --package zhorten-app --lib --release \
       --target-dir target/front --target wasm32-unknown-unknown \
-      --no-default-features --features hydrate \
+      --no-default-features --features csr \
     && mkdir -p /output/site/pkg \
-    && wasm-bindgen --target web --out-dir /output/site/pkg --out-name zhorten \
-      target/front/wasm32-unknown-unknown/release/zhorten.wasm \
-    && cp public/style.css public/favicon.svg /output/site/ \
-    && cargo build --locked --package zhorten --bin zhorten --release \
-      --no-default-features --features ssr \
+    && wasm-bindgen --target web --out-dir /output/site/pkg --out-name zhorten_app \
+      target/front/wasm32-unknown-unknown/release/zhorten_app.wasm \
+    && cp public/index.html public/style.css public/favicon.svg /output/site/ \
+    && cargo build --locked --package zhorten-server --bin zhorten --release \
     && cp target/release/zhorten /output/zhorten \
     && mkdir -p /output/data
 
@@ -35,8 +34,7 @@ WORKDIR /app
 ENV ZHORTEN_ADDR=0.0.0.0:3000 \
     ZHORTEN_DB=/data/zhorten.db \
     ZHORTEN_CACHE_CAPACITY=67108864 \
-    LEPTOS_SITE_ROOT=/app/site \
-    LEPTOS_OUTPUT_NAME=zhorten
+    ZHORTEN_SITE_ROOT=/app/site
 VOLUME ["/data"]
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \

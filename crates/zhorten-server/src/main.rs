@@ -1,22 +1,18 @@
-#![recursion_limit = "512"]
-
 use axum::{
     Json, Router,
-    extract::{FromRef, Path, State},
+    extract::{Path, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
     routing::{delete, get, post},
 };
 use clap::Parser;
-use leptos::prelude::*;
-use leptos_axum::{LeptosRoutes, generate_route_list};
-use leptos_meta::MetaTags;
 use rand::{RngExt, distr::Alphanumeric};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     io::{Read, Write},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream},
+    path::PathBuf,
     sync::{Arc, RwLock},
     time::Duration,
 };
@@ -25,7 +21,7 @@ use tower_http::{
     services::{ServeDir, ServeFile},
     trace::TraceLayer,
 };
-use zhorten::{App, DashboardData, LinkRecord};
+use zhorten_core::{DashboardData, LinkRecord};
 
 const SESSION_COOKIE: &str = "zhorten_session";
 const SESSION_TOKEN_LEN: usize = 48;
@@ -45,6 +41,8 @@ struct Args {
     cache_capacity: u64,
     #[arg(long, env = "ZHORTEN_ADDR", default_value = "127.0.0.1:3000")]
     address: SocketAddr,
+    #[arg(long, env = "ZHORTEN_SITE_ROOT", default_value = "./target/site")]
+    site_root: PathBuf,
     /// Add the Secure attribute to session cookies.
     ///
     /// Enable this when zhorten is served through HTTPS. Leave it disabled for
@@ -67,13 +65,6 @@ struct AppState {
     password: Arc<String>,
     sessions: Arc<RwLock<HashMap<String, Session>>>,
     secure_cookies: bool,
-    leptos_options: LeptosOptions,
-}
-
-impl FromRef<AppState> for LeptosOptions {
-    fn from_ref(state: &AppState) -> Self {
-        state.leptos_options.clone()
-    }
 }
 
 #[derive(Deserialize)]
@@ -81,11 +72,13 @@ struct LoginRequest {
     username: String,
     password: String,
 }
+
 #[derive(Deserialize)]
 struct CreateRequest {
     code: String,
     url: String,
 }
+
 #[derive(Serialize)]
 struct ErrorBody {
     error: String,
@@ -111,45 +104,31 @@ async fn main() {
         .cache_capacity(args.cache_capacity)
         .open()
         .expect("unable to open sled database");
-    let conf = get_configuration(None).expect("Leptos configuration");
-    let mut leptos_options = conf.leptos_options;
-    if leptos_options.output_name.is_empty() {
-        leptos_options.output_name = "zhorten".into();
-    }
-    let state = AppState {
-        db,
-        username: Arc::new(args.username),
-        password: Arc::new(args.password),
-        sessions: Default::default(),
-        secure_cookies: args.secure_cookies,
-        leptos_options: leptos_options.clone(),
-    };
-    let routes = generate_route_list(App);
 
-    let site_root = std::path::PathBuf::from(leptos_options.site_root.as_ref());
-    let stylesheet = site_root.join("style.css");
-    let favicon = site_root.join("favicon.svg");
+    let site_root = args.site_root;
+    let index = site_root.join("index.html");
     let app = Router::new()
         .route("/z/{code}", get(follow_link))
         .route("/{code}", get(follow_link))
-        .route_service("/style.css", ServeFile::new(stylesheet))
-        .route_service("/favicon.svg", ServeFile::new(favicon))
-        .route(
-            "/favicon.ico",
-            get(|| async { Redirect::permanent("/favicon.svg") }),
-        )
         .route("/api/login", post(login))
         .route("/api/logout", post(logout))
         .route("/api/links", get(list_links).post(create_link))
         .route("/api/links/{code}", delete(remove_link))
-        .leptos_routes(&state, routes, {
-            let opts = leptos_options.clone();
-            move || shell(opts.clone())
-        })
-        .fallback_service(ServeDir::new(leptos_options.site_root.as_ref()))
+        .route_service("/admin", ServeFile::new(index.clone()))
+        .route(
+            "/favicon.ico",
+            get(|| async { Redirect::permanent("/favicon.svg") }),
+        )
+        .fallback_service(ServeDir::new(&site_root).not_found_service(ServeFile::new(index)))
         .layer(axum::middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
-        .with_state(state);
+        .with_state(AppState {
+            db,
+            username: Arc::new(args.username),
+            password: Arc::new(args.password),
+            sessions: Default::default(),
+            secure_cookies: args.secure_cookies,
+        });
 
     println!("zhorten listening on http://{}", args.address);
     let listener = tokio::net::TcpListener::bind(args.address)
@@ -184,23 +163,6 @@ fn healthy(address: SocketAddr) -> bool {
         response[..read].starts_with(b"HTTP/1.1 200")
             || response[..read].starts_with(b"HTTP/1.0 200")
     })
-}
-
-fn shell(options: LeptosOptions) -> impl IntoView {
-    view! {
-        <!DOCTYPE html>
-        <html lang="en">
-            <head>
-                <meta charset="utf-8"/>
-                <meta name="viewport" content="width=device-width, initial-scale=1"/>
-                <link rel="icon" type="image/svg+xml" href="/favicon.svg"/>
-                <AutoReload options=options.clone()/>
-                <HydrationScripts options/>
-                <MetaTags/>
-            </head>
-            <body><App/></body>
-        </html>
-    }
 }
 
 async fn shutdown_signal() {
@@ -328,7 +290,7 @@ async fn create_link(
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorBody {
-                error: "Code must be 1–32 letters, numbers, dashes, or underscores.".into(),
+                error: "Code must be 1-32 letters, numbers, dashes, or underscores.".into(),
             }),
         ));
     }
@@ -386,7 +348,7 @@ async fn remove_link(
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorBody {
-                error: "Code must be 1–32 letters, numbers, dashes, or underscores.".into(),
+                error: "Code must be 1-32 letters, numbers, dashes, or underscores.".into(),
             }),
         ));
     }
@@ -491,7 +453,7 @@ async fn security_headers(
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
         HeaderValue::from_static(
-            "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+            "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
         ),
     );
     response

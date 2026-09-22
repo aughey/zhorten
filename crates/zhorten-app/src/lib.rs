@@ -1,5 +1,5 @@
 #![recursion_limit = "512"]
-#![cfg_attr(not(feature = "hydrate"), allow(dead_code, unused_variables))]
+#![cfg_attr(not(feature = "csr"), allow(dead_code, unused_variables))]
 
 use leptos::prelude::*;
 use leptos_meta::{Stylesheet, Title, provide_meta_context};
@@ -9,26 +9,7 @@ use leptos_router::{
 };
 use qrcode::{QrCode, render::svg};
 use serde::{Deserialize, Serialize};
-
-/// A persisted short-link record.
-///
-/// The server validates `code` and `url` before writing records. Client-side
-/// code treats these as display data from the API and never as trusted HTML.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub struct LinkRecord {
-    pub code: String,
-    pub url: String,
-    pub clicks: u64,
-    pub created_at: i64,
-    pub last_clicked_at: Option<i64>,
-}
-
-/// Data returned by the authenticated dashboard endpoint.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct DashboardData {
-    pub links: Vec<LinkRecord>,
-    pub total_clicks: u64,
-}
+use zhorten_core::{DashboardData, LinkRecord};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct ApiError {
@@ -47,7 +28,7 @@ struct CreateRequest {
     url: String,
 }
 
-#[cfg(feature = "hydrate")]
+#[cfg(feature = "csr")]
 async fn api<T: for<'de> Deserialize<'de>>(
     method: &str,
     path: &str,
@@ -136,7 +117,7 @@ fn Admin() -> impl IntoView {
     let (data, set_data) = signal(None::<DashboardData>);
     let (error, set_error) = signal(None::<String>);
 
-    #[cfg(feature = "hydrate")]
+    #[cfg(feature = "csr")]
     Effect::new(move |_| {
         leptos::task::spawn_local(async move {
             match api::<DashboardData>("GET", "/api/links", None).await {
@@ -150,7 +131,7 @@ fn Admin() -> impl IntoView {
             set_loading.set(false);
         });
     });
-    #[cfg(not(feature = "hydrate"))]
+    #[cfg(not(feature = "csr"))]
     set_loading.set(false);
 
     view! {
@@ -177,7 +158,7 @@ fn Login(
         ev.prevent_default();
         set_busy.set(true);
         set_error.set(None);
-        #[cfg(feature = "hydrate")]
+        #[cfg(feature = "csr")]
         leptos::task::spawn_local(async move {
             let body = serde_json::to_string(&LoginRequest {
                 username: username.get(),
@@ -228,7 +209,7 @@ fn Dashboard(
     let (busy, set_busy) = signal(false);
 
     let refresh = move || {
-        #[cfg(feature = "hydrate")]
+        #[cfg(feature = "csr")]
         leptos::task::spawn_local(async move {
             match api::<DashboardData>("GET", "/api/links", None).await {
                 Ok(value) => set_data.set(Some(value)),
@@ -240,7 +221,7 @@ fn Dashboard(
         ev.prevent_default();
         set_busy.set(true);
         set_error.set(None);
-        #[cfg(feature = "hydrate")]
+        #[cfg(feature = "csr")]
         leptos::task::spawn_local(async move {
             let body = serde_json::to_string(&CreateRequest {
                 code: code.get(),
@@ -259,7 +240,7 @@ fn Dashboard(
         });
     };
     let logout = move |_| {
-        #[cfg(feature = "hydrate")]
+        #[cfg(feature = "csr")]
         leptos::task::spawn_local(async move {
             let _ = api::<serde_json::Value>("POST", "/api/logout", Some("{}".into())).await;
             set_authenticated.set(false);
@@ -311,7 +292,7 @@ fn LinkRow(
     let destination = item.url.clone();
     let delete = move |_| {
         let code = code_for_delete.clone();
-        #[cfg(feature = "hydrate")]
+        #[cfg(feature = "csr")]
         {
             let confirmed = web_sys::window()
                 .and_then(|window| {
@@ -387,7 +368,7 @@ fn LinkTools(short_path: String) -> impl IntoView {
 
 fn copy_short_url(path: &str, set_copied: WriteSignal<bool>) {
     let url = absolute_short_url(path);
-    #[cfg(feature = "hydrate")]
+    #[cfg(feature = "csr")]
     if let Some(window) = web_sys::window() {
         let promise = window.navigator().clipboard().write_text(&url);
         leptos::task::spawn_local(async move {
@@ -399,7 +380,7 @@ fn copy_short_url(path: &str, set_copied: WriteSignal<bool>) {
 }
 
 fn absolute_short_url(path: &str) -> String {
-    #[cfg(feature = "hydrate")]
+    #[cfg(feature = "csr")]
     if let Some(window) = web_sys::window()
         && let Ok(origin) = window.location().origin()
     {
@@ -421,14 +402,14 @@ fn qr_svg(value: &str) -> String {
 }
 
 fn format_date(timestamp: i64) -> String {
-    #[cfg(feature = "hydrate")]
+    #[cfg(feature = "csr")]
     {
         let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(timestamp as f64 * 1000.0));
         date.to_locale_date_string("en-US", &wasm_bindgen::JsValue::UNDEFINED)
             .as_string()
             .unwrap_or_default()
     }
-    #[cfg(not(feature = "hydrate"))]
+    #[cfg(not(feature = "csr"))]
     timestamp.to_string()
 }
 
@@ -437,9 +418,9 @@ fn ErrorBanner(error: ReadSignal<Option<String>>) -> impl IntoView {
     view! { <Show when=move || error.get().is_some()>{move || view! { <div class="error-banner">{error.get().unwrap_or_default()}</div> }}</Show> }
 }
 
-#[cfg(feature = "hydrate")]
-#[wasm_bindgen::prelude::wasm_bindgen]
-pub fn hydrate() {
+#[cfg(feature = "csr")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn main() {
     console_error_panic_hook::set_once();
-    leptos::mount::hydrate_body(App);
+    leptos::mount::mount_to_body(App);
 }

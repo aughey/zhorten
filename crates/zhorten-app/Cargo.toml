@@ -1,0 +1,33 @@
+[package]
+name = "zhorten-app"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+leptos = { version = "0.8.20", features = ["nightly"] }
+leptos_meta = "0.8.6"
+leptos_router = { version = "0.8.15", features = ["nightly"] }
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
+serde.workspace = true
+serde_json.workspace = true
+zhorten-core.workspace = true
+
+console_error_panic_hook = { version = "0.1.7", optional = true }
+js-sys = { version = "0.3.105", optional = true }
+wasm-bindgen = { version = "0.2.128", optional = true }
+wasm-bindgen-futures = { version = "0.4.78", optional = true }
+web-sys = { version = "0.3.105", optional = true, features = ["Clipboard", "Headers", "Location", "Navigator", "Request", "RequestInit", "RequestMode", "Response", "Window"] }
+
+[features]
+default = ["csr"]
+csr = [
+  "dep:console_error_panic_hook",
+  "dep:js-sys",
+  "dep:wasm-bindgen",
+  "dep:wasm-bindgen-futures",
+  "dep:web-sys",
+  "leptos/csr",
+]

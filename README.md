@@ -2,12 +2,13 @@
 
 zhorten is a tiny, simple replacement for [YOURLS](https://yourls.org/). It provides short links, click counts, QR codes, and a private administration screen without requiring a separate database or web server.
 
-The application is written in Rust with Leptos and Axum. It serves its own UI and static files, and stores links in an embedded sled database. The goal is a fast, secure deployment with very little memory or operational overhead.
+The application is written in Rust with a client-side rendered Leptos app and a small Axum server. The server exposes only redirect and JSON API routes, serves the static browser bundle, and stores links in an embedded sled database. The goal is a fast, secure deployment with very little memory or operational overhead.
 
 The production instance runs comfortably on AWS's smallest 64-bit Arm EC2 instance, a `t4g.nano` with 512 MB of memory, for a few dollars per month.
 
 ## Features
 
+- Static client-side Leptos app served by a tight Rust API server
 - One self-contained service with no external database
 - Compatible `/code` and `/z/code` redirect paths
 - Password-protected administration screen
@@ -33,23 +34,21 @@ Build the browser bundle and server:
 ```bash
 mkdir -p target/site/pkg
 
-cargo build --locked --package zhorten --lib --release \
+cargo build --locked --package zhorten-app --lib --release \
   --target-dir target/front \
   --target wasm32-unknown-unknown \
   --no-default-features \
-  --features hydrate
+  --features csr
 
 wasm-bindgen \
   --target web \
   --out-dir target/site/pkg \
-  --out-name zhorten \
-  target/front/wasm32-unknown-unknown/release/zhorten.wasm
+  --out-name zhorten_app \
+  target/front/wasm32-unknown-unknown/release/zhorten_app.wasm
 
-cp public/style.css public/favicon.svg target/site/
+cp public/index.html public/style.css public/favicon.svg target/site/
 
-cargo build --locked --package zhorten --bin zhorten --release \
-  --no-default-features \
-  --features ssr
+cargo build --locked --package zhorten-server --bin zhorten --release
 ```
 
 Start the server:
@@ -58,8 +57,7 @@ Start the server:
 export ZHORTEN_USERNAME=admin
 export ZHORTEN_PASSWORD='choose-a-long-random-password'
 export ZHORTEN_DB='./data/zhorten.db'
-export LEPTOS_SITE_ROOT='./target/site'
-export LEPTOS_OUTPUT_NAME='zhorten'
+export ZHORTEN_SITE_ROOT='./target/site'
 ./target/release/zhorten
 ```
 
@@ -74,6 +72,7 @@ The command-line options are also available through environment variables:
 | `--database` | `ZHORTEN_DB` | `./data/zhorten.db` |
 | `--cache-capacity` | `ZHORTEN_CACHE_CAPACITY` | `67108864` (64 MiB) |
 | `--address` | `ZHORTEN_ADDR` | `127.0.0.1:3000` |
+| `--site-root` | `ZHORTEN_SITE_ROOT` | `./target/site` |
 | `--secure-cookies` | `ZHORTEN_SECURE_COOKIES` | `false` |
 
 The password is supplied at startup and is never written to the database. Sessions are held in memory and end when their one-day cookie expires or the service restarts.
