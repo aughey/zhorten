@@ -39,6 +39,7 @@ USER zhorten
 WORKDIR /app
 ENV ZHORTEN_ADDR=0.0.0.0:3000 \
     ZHORTEN_DB=/data/zhorten.db \
+    ZHORTEN_CACHE_CAPACITY=67108864 \
     LEPTOS_SITE_ROOT=/app/site \
     LEPTOS_OUTPUT_NAME=zhorten
 VOLUME ["/data"]
@@ -46,4 +47,3 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD curl --fail --silent http://127.0.0.1:3000/ > /dev/null || exit 1
 ENTRYPOINT ["/app/zhorten"]
-

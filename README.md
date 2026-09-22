@@ -16,7 +16,7 @@ Then open <http://127.0.0.1:3000/admin>. The default username is `admin`.
 
 The included scripts build the browser and server halves without depending on a particular `cargo-leptos` release. With a current `cargo-leptos`, `cargo leptos watch -- --password "choose-a-password"` also provides hot reload.
 
-The same settings can be supplied as `ZHORTEN_USERNAME`, `ZHORTEN_PASSWORD`, `ZHORTEN_DB`, and `ZHORTEN_ADDR`.
+The same settings can be supplied as `ZHORTEN_USERNAME`, `ZHORTEN_PASSWORD`, `ZHORTEN_DB`, `ZHORTEN_CACHE_CAPACITY`, and `ZHORTEN_ADDR`. The sled cache defaults to 64 MiB, which is suitable for small container hosts.
 
 Short URLs use `/z/:code`. For compatibility with legacy YOURLS links, `/:code` resolves the same records. Each redirect atomically updates its total and stores a compact timestamped click event in sled. Admin sessions live in memory and expire via their one-day cookie or when the server restarts.
 

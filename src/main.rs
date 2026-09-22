@@ -34,6 +34,8 @@ struct Args {
     password: String,
     #[arg(long, env = "ZHORTEN_DB", default_value = "./data/zhorten.db")]
     database: String,
+    #[arg(long, env = "ZHORTEN_CACHE_CAPACITY", default_value_t = 64 * 1024 * 1024)]
+    cache_capacity: u64,
     #[arg(long, env = "ZHORTEN_ADDR", default_value = "127.0.0.1:3000")]
     address: SocketAddr,
 }
@@ -80,7 +82,11 @@ async fn main() {
         eprintln!("error: --password (or ZHORTEN_PASSWORD) must not be empty");
         std::process::exit(2);
     }
-    let db = sled::open(&args.database).expect("unable to open sled database");
+    let db = sled::Config::new()
+        .path(&args.database)
+        .cache_capacity(args.cache_capacity)
+        .open()
+        .expect("unable to open sled database");
     let conf = get_configuration(None).expect("Leptos configuration");
     let mut leptos_options = conf.leptos_options;
     if leptos_options.output_name.is_empty() {
