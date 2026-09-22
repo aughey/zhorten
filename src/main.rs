@@ -14,7 +14,7 @@ use leptos_meta::MetaTags;
 use rand::{RngExt, distr::Alphanumeric};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashSet,
+    collections::HashMap,
     io::{Read, Write},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream},
     sync::{Arc, RwLock},
@@ -26,6 +26,11 @@ use tower_http::{
     trace::TraceLayer,
 };
 use zhorten::{App, DashboardData, LinkRecord};
+
+const SESSION_COOKIE: &str = "zhorten_session";
+const SESSION_TOKEN_LEN: usize = 48;
+const SESSION_MAX_AGE_SECONDS: i64 = 86_400;
+const MAX_CODE_LEN: usize = 32;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "A tiny self-hosted URL shortener")]
@@ -40,8 +45,19 @@ struct Args {
     cache_capacity: u64,
     #[arg(long, env = "ZHORTEN_ADDR", default_value = "127.0.0.1:3000")]
     address: SocketAddr,
+    /// Add the Secure attribute to session cookies.
+    ///
+    /// Enable this when zhorten is served through HTTPS. Leave it disabled for
+    /// plain HTTP local development, where browsers will reject Secure cookies.
+    #[arg(long, env = "ZHORTEN_SECURE_COOKIES", default_value_t = false)]
+    secure_cookies: bool,
     #[arg(long, hide = true)]
     healthcheck: bool,
+}
+
+#[derive(Clone, Debug)]
+struct Session {
+    expires_at: i64,
 }
 
 #[derive(Clone)]
@@ -49,7 +65,8 @@ struct AppState {
     db: sled::Db,
     username: Arc<String>,
     password: Arc<String>,
-    sessions: Arc<RwLock<HashSet<String>>>,
+    sessions: Arc<RwLock<HashMap<String, Session>>>,
+    secure_cookies: bool,
     leptos_options: LeptosOptions,
 }
 
@@ -104,6 +121,7 @@ async fn main() {
         username: Arc::new(args.username),
         password: Arc::new(args.password),
         sessions: Default::default(),
+        secure_cookies: args.secure_cookies,
         leptos_options: leptos_options.clone(),
     };
     let routes = generate_route_list(App);
@@ -129,6 +147,7 @@ async fn main() {
             move || shell(opts.clone())
         })
         .fallback_service(ServeDir::new(leptos_options.site_root.as_ref()))
+        .layer(axum::middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
@@ -195,12 +214,38 @@ fn cookie_token(headers: &HeaderMap) -> Option<String> {
         .ok()?
         .split(';')
         .map(str::trim)
-        .find_map(|v| v.strip_prefix("zhorten_session=").map(str::to_owned))
+        .find_map(|v| v.strip_prefix(&format!("{SESSION_COOKIE}=")))
+        .filter(|token| {
+            token.len() == SESSION_TOKEN_LEN && token.bytes().all(|b| b.is_ascii_alphanumeric())
+        })
+        .map(str::to_owned)
 }
 
 fn authorized(state: &AppState, headers: &HeaderMap) -> bool {
-    cookie_token(headers)
-        .is_some_and(|token| state.sessions.read().is_ok_and(|s| s.contains(&token)))
+    cookie_token(headers).is_some_and(|token| session_is_authorized(state, &token, now()))
+}
+
+fn session_is_authorized(state: &AppState, token: &str, now: i64) -> bool {
+    let session = match state.sessions.read() {
+        Ok(sessions) => sessions.get(token).cloned(),
+        Err(error) => {
+            tracing::error!(%error, "session store lock poisoned");
+            return false;
+        }
+    };
+    let Some(session) = session else {
+        return false;
+    };
+    if session.expires_at > now {
+        return true;
+    }
+    match state.sessions.write() {
+        Ok(mut sessions) => {
+            sessions.remove(token);
+        }
+        Err(error) => tracing::error!(%error, "session store lock poisoned"),
+    }
+    false
 }
 
 fn unauthorized<T>() -> ApiResult<T> {
@@ -225,16 +270,23 @@ async fn login(
     }
     let token: String = rand::rng()
         .sample_iter(&Alphanumeric)
-        .take(48)
+        .take(SESSION_TOKEN_LEN)
         .map(char::from)
         .collect();
-    state.sessions.write().unwrap().insert(token.clone());
+    state.sessions.write().map_err(internal_error)?.insert(
+        token.clone(),
+        Session {
+            expires_at: now() + SESSION_MAX_AGE_SECONDS,
+        },
+    );
     let data = dashboard(&state).map_err(internal_error)?;
     let mut response = Json(data).into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
-        HeaderValue::from_str(&format!(
-            "zhorten_session={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=86400"
+        HeaderValue::from_str(&session_cookie(
+            &token,
+            state.secure_cookies,
+            SESSION_MAX_AGE_SECONDS,
         ))
         .unwrap(),
     );
@@ -243,12 +295,16 @@ async fn login(
 
 async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
     if let Some(token) = cookie_token(&headers) {
-        state.sessions.write().unwrap().remove(&token);
+        if let Ok(mut sessions) = state.sessions.write() {
+            sessions.remove(&token);
+        } else {
+            tracing::error!("session store lock poisoned");
+        }
     }
     let mut response = Json(serde_json::json!({"ok": true})).into_response();
     response.headers_mut().insert(
         header::SET_COOKIE,
-        HeaderValue::from_static("zhorten_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"),
+        HeaderValue::from_str(&session_cookie("", state.secure_cookies, 0)).unwrap(),
     );
     response
 }
@@ -268,13 +324,7 @@ async fn create_link(
     if !authorized(&state, &headers) {
         return unauthorized();
     }
-    if body.code.is_empty()
-        || body.code.len() > 32
-        || !body
-            .code
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
+    if !valid_code(&body.code) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorBody {
@@ -312,7 +362,7 @@ async fn create_link(
     }
     let record = LinkRecord {
         code: body.code.clone(),
-        url: body.url,
+        url: parsed.to_string(),
         clicks: 0,
         created_at: now(),
         last_clicked_at: None,
@@ -332,6 +382,14 @@ async fn remove_link(
     if !authorized(&state, &headers) {
         return unauthorized();
     }
+    if !valid_code(&code) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorBody {
+                error: "Code must be 1–32 letters, numbers, dashes, or underscores.".into(),
+            }),
+        ));
+    }
     state
         .db
         .open_tree("links")
@@ -343,6 +401,9 @@ async fn remove_link(
 }
 
 async fn follow_link(State(state): State<AppState>, Path(code): Path<String>) -> Response {
+    if !valid_code(&code) {
+        return (StatusCode::NOT_FOUND, "Short link not found").into_response();
+    }
     let links = match state.db.open_tree("links") {
         Ok(t) => t,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -397,6 +458,45 @@ fn dashboard(state: &AppState) -> Result<DashboardData, sled::Error> {
 fn now() -> i64 {
     OffsetDateTime::now_utc().unix_timestamp()
 }
+
+fn valid_code(code: &str) -> bool {
+    !code.is_empty()
+        && code.len() <= MAX_CODE_LEN
+        && code
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+fn session_cookie(token: &str, secure: bool, max_age: i64) -> String {
+    let secure_attr = if secure { "; Secure" } else { "" };
+    format!(
+        "{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}{secure_attr}"
+    )
+}
+
+async fn security_headers(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("same-origin"),
+    );
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(
+            "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+        ),
+    );
+    response
+}
+
 fn internal_error<E: std::fmt::Display>(error: E) -> (StatusCode, Json<ErrorBody>) {
     tracing::error!(%error, "database error");
     (
@@ -405,4 +505,26 @@ fn internal_error<E: std::fmt::Display>(error: E) -> (StatusCode, Json<ErrorBody
             error: "Internal server error.".into(),
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valid_code_accepts_only_route_safe_codes() {
+        assert!(valid_code("abc-123_DEF"));
+        assert!(!valid_code(""));
+        assert!(!valid_code("has/slash"));
+        assert!(!valid_code("has space"));
+        assert!(!valid_code(&"a".repeat(MAX_CODE_LEN + 1)));
+    }
+
+    #[test]
+    fn session_cookie_can_be_marked_secure() {
+        let cookie = session_cookie("token", true, SESSION_MAX_AGE_SECONDS);
+        assert!(cookie.contains("HttpOnly"));
+        assert!(cookie.contains("SameSite=Strict"));
+        assert!(cookie.contains("Secure"));
+    }
 }

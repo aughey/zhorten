@@ -59,6 +59,7 @@ export ZHORTEN_USERNAME=admin
 export ZHORTEN_PASSWORD='choose-a-long-random-password'
 export ZHORTEN_DB='./data/zhorten.db'
 export LEPTOS_SITE_ROOT='./target/site'
+export LEPTOS_OUTPUT_NAME='zhorten'
 ./target/release/zhorten
 ```
 
@@ -73,6 +74,7 @@ The command-line options are also available through environment variables:
 | `--database` | `ZHORTEN_DB` | `./data/zhorten.db` |
 | `--cache-capacity` | `ZHORTEN_CACHE_CAPACITY` | `67108864` (64 MiB) |
 | `--address` | `ZHORTEN_ADDR` | `127.0.0.1:3000` |
+| `--secure-cookies` | `ZHORTEN_SECURE_COOKIES` | `false` |
 
 The password is supplied at startup and is never written to the database. Sessions are held in memory and end when their one-day cookie expires or the service restarts.
 
@@ -152,6 +154,7 @@ cat > /home/ec2-user/zhorten/zhorten.env <<'EOF'
 ZHORTEN_USERNAME=admin
 ZHORTEN_PASSWORD=replace-with-a-long-random-password
 ZHORTEN_CACHE_CAPACITY=67108864
+ZHORTEN_SECURE_COOKIES=false
 RUST_LOG=info
 EOF
 
@@ -210,7 +213,7 @@ docker logs zhorten
 
 ## HTTPS
 
-zhorten can serve HTTP directly and does not require another web server. For a public administration screen, HTTPS is strongly recommended. A small reverse proxy such as Caddy can terminate TLS on ports `80` and `443` and proxy to zhorten on a loopback-only port such as `127.0.0.1:3000`.
+zhorten can serve HTTP directly and does not require another web server. For a public administration screen, HTTPS is strongly recommended. A small reverse proxy such as Caddy can terminate TLS on ports `80` and `443` and proxy to zhorten on a loopback-only port such as `127.0.0.1:3000`. Set `ZHORTEN_SECURE_COOKIES=true` when the public site uses HTTPS.
 
 ## Container Publishing
 

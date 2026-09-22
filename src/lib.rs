@@ -10,6 +10,10 @@ use leptos_router::{
 use qrcode::{QrCode, render::svg};
 use serde::{Deserialize, Serialize};
 
+/// A persisted short-link record.
+///
+/// The server validates `code` and `url` before writing records. Client-side
+/// code treats these as display data from the API and never as trusted HTML.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct LinkRecord {
     pub code: String,
@@ -19,6 +23,7 @@ pub struct LinkRecord {
     pub last_clicked_at: Option<i64>,
 }
 
+/// Data returned by the authenticated dashboard endpoint.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct DashboardData {
     pub links: Vec<LinkRecord>,
@@ -340,7 +345,7 @@ fn LinkRow(
     };
     view! {
         <article class="link-row">
-            <div class="link-main"><a class="short-link" href=short_path.clone() target="_blank">{short_path.clone()}<span>"↗"</span></a><a class="destination" href=destination.clone() target="_blank" rel="noreferrer">{destination.clone()}</a></div>
+            <div class="link-main"><a class="short-link" href=short_path.clone() target="_blank" rel="noopener noreferrer">{short_path.clone()}<span>"↗"</span></a><a class="destination" href=destination.clone() target="_blank" rel="noopener noreferrer">{destination.clone()}</a></div>
             <div class="click-count"><strong>{item.clicks}</strong><span>"clicks"</span></div>
             <div class="created"><span>"CREATED"</span><time>{format_date(item.created_at)}</time></div>
             <div class="row-actions">
@@ -372,7 +377,7 @@ fn LinkTools(short_path: String) -> impl IntoView {
                     <p class="qr-url">{move || absolute_short_url(&modal_path.get_value())}</p>
                     <div class="modal-actions">
                         <button class="button" on:click=move |_| copy_short_url(&modal_path.get_value(), set_copied)>{move || if copied.get() { "Copied to clipboard" } else { "Copy short URL" }}</button>
-                        <a class="button secondary-button" href=move || modal_path.get_value() target="_blank">"Open redirect ↗"</a>
+                        <a class="button secondary-button" href=move || modal_path.get_value() target="_blank" rel="noopener noreferrer">"Open redirect ↗"</a>
                     </div>
                 </section>
             </div>
@@ -419,10 +424,9 @@ fn format_date(timestamp: i64) -> String {
     #[cfg(feature = "hydrate")]
     {
         let date = js_sys::Date::new(&wasm_bindgen::JsValue::from_f64(timestamp as f64 * 1000.0));
-        return date
-            .to_locale_date_string("en-US", &wasm_bindgen::JsValue::UNDEFINED)
+        date.to_locale_date_string("en-US", &wasm_bindgen::JsValue::UNDEFINED)
             .as_string()
-            .unwrap_or_default();
+            .unwrap_or_default()
     }
     #[cfg(not(feature = "hydrate"))]
     timestamp.to_string()
