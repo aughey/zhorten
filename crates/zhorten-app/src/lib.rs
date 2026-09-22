@@ -77,7 +77,7 @@ pub fn App() -> impl IntoView {
     provide_meta_context();
     view! {
         <Title text="zhorten — tiny links"/>
-        <Stylesheet id="zhorten" href="/style.css"/>
+        <Stylesheet id="zhorten" href="/assets/style.css"/>
         <Router>
             <Routes fallback=|| view! { <NotFound/> }>
                 <Route path=path!("/") view=Home/>

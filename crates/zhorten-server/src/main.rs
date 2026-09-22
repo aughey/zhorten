@@ -108,18 +108,19 @@ async fn main() {
     let site_root = args.site_root;
     let index = site_root.join("index.html");
     let app = Router::new()
+        .route_service("/", ServeFile::new(index.clone()))
+        .route_service("/admin", ServeFile::new(index))
+        .nest_service("/assets", ServeDir::new(site_root.join("assets")))
         .route("/z/{code}", get(follow_link))
         .route("/{code}", get(follow_link))
         .route("/api/login", post(login))
         .route("/api/logout", post(logout))
         .route("/api/links", get(list_links).post(create_link))
         .route("/api/links/{code}", delete(remove_link))
-        .route_service("/admin", ServeFile::new(index.clone()))
         .route(
             "/favicon.ico",
-            get(|| async { Redirect::permanent("/favicon.svg") }),
+            get(|| async { Redirect::permanent("/assets/favicon.svg") }),
         )
-        .fallback_service(ServeDir::new(&site_root).not_found_service(ServeFile::new(index)))
         .layer(axum::middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
         .with_state(AppState {

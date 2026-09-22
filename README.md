@@ -32,7 +32,7 @@ cargo install wasm-bindgen-cli --version 0.2.128 --locked --force
 Build the browser bundle and server:
 
 ```bash
-mkdir -p target/site/pkg
+mkdir -p target/site/assets/pkg
 
 cargo build --locked --package zhorten-app --lib --release \
   --target-dir target/front \
@@ -42,11 +42,12 @@ cargo build --locked --package zhorten-app --lib --release \
 
 wasm-bindgen \
   --target web \
-  --out-dir target/site/pkg \
+  --out-dir target/site/assets/pkg \
   --out-name zhorten_app \
   target/front/wasm32-unknown-unknown/release/zhorten_app.wasm
 
-cp public/index.html public/style.css public/favicon.svg target/site/
+cp public/index.html target/site/
+cp public/assets/bootstrap.js public/assets/style.css public/assets/favicon.svg target/site/assets/
 
 cargo build --locked --package zhorten-server --bin zhorten --release
 ```

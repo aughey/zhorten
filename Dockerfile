@@ -15,10 +15,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --locked --package zhorten-app --lib --release \
       --target-dir target/front --target wasm32-unknown-unknown \
       --no-default-features --features csr \
-    && mkdir -p /output/site/pkg \
-    && wasm-bindgen --target web --out-dir /output/site/pkg --out-name zhorten_app \
+    && mkdir -p /output/site/assets/pkg \
+    && wasm-bindgen --target web --out-dir /output/site/assets/pkg --out-name zhorten_app \
       target/front/wasm32-unknown-unknown/release/zhorten_app.wasm \
-    && cp public/index.html public/style.css public/favicon.svg /output/site/ \
+    && cp public/index.html /output/site/ \
+    && cp public/assets/bootstrap.js public/assets/style.css public/assets/favicon.svg /output/site/assets/ \
     && cargo build --locked --package zhorten-server --bin zhorten --release \
     && cp target/release/zhorten /output/zhorten \
     && mkdir -p /output/data
