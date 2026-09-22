@@ -11,7 +11,7 @@ use clap::Parser;
 use leptos::prelude::*;
 use leptos_axum::{LeptosRoutes, generate_route_list};
 use leptos_meta::MetaTags;
-use rand::{Rng, distr::Alphanumeric};
+use rand::{RngExt, distr::Alphanumeric};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
