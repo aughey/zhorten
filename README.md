@@ -18,7 +18,16 @@ The production instance runs comfortably on AWS's smallest 64-bit Arm EC2 instan
 - Non-root, health-checked Docker image
 - Native AMD64 and ARM64 container builds
 
-## Run with Cargo
+## Project Layout
+
+- `crates/zhorten-app` is the standalone Leptos CSR application compiled to WebAssembly.
+- `crates/zhorten-core` contains data types shared by the browser and server crates.
+- `crates/zhorten-server` is the Axum API, redirect, and static-file server.
+- `public` contains the HTML shell and source assets copied into the browser bundle.
+
+The browser and server are separate build artifacts. A normal Cargo build does not run `wasm-bindgen` or assemble the static site directory.
+
+## Build and Run from Source
 
 zhorten uses the Rust nightly toolchain. Install the WebAssembly target and the `wasm-bindgen` CLI version locked by the project:
 
@@ -29,7 +38,7 @@ rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.128 --locked --force
 ```
 
-Build the browser bundle and server:
+Build the browser bundle, assemble `target/site`, and build the server:
 
 ```bash
 mkdir -p target/site/assets/pkg
@@ -47,10 +56,15 @@ wasm-bindgen \
   target/front/wasm32-unknown-unknown/release/zhorten_app.wasm
 
 cp public/index.html target/site/
-cp public/assets/bootstrap.js public/assets/style.css public/assets/favicon.svg target/site/assets/
+cp -R public/assets/. target/site/assets/
 
 cargo build --locked --package zhorten-server --bin zhorten --release
 ```
+
+The resulting artifacts are:
+
+- `target/site/index.html` and `target/site/assets/`: the complete static browser application.
+- `target/release/zhorten`: the server executable.
 
 Start the server:
 
@@ -62,7 +76,7 @@ export ZHORTEN_SITE_ROOT='./target/site'
 ./target/release/zhorten
 ```
 
-Open <http://127.0.0.1:3000/admin>. Rerun the build commands after changing Rust code or frontend assets.
+Open <http://127.0.0.1:3000/admin>. Rebuild the WASM bundle after changing `zhorten-app`, rebuild the executable after changing `zhorten-server`, and recopy `public` files after changing static assets.
 
 The command-line options are also available through environment variables:
 
@@ -81,6 +95,14 @@ The password is supplied at startup and is never written to the database. Sessio
 ## Run with Docker
 
 The public image is stored in the GitHub Container Registry at `ghcr.io/aughey/zhorten`. The `latest` tag is a multi-architecture image supporting both AMD64 and ARM64.
+
+To build the production image from the current checkout instead:
+
+```bash
+docker build -t zhorten:local .
+```
+
+Use `zhorten:local` in place of `ghcr.io/aughey/zhorten:latest` in the commands below.
 
 ```bash
 docker volume create zhorten-data
