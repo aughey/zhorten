@@ -1,6 +1,9 @@
 use std::{fmt, path::Path};
 use url::Url;
-use zhorten_core::{ValidCode, api::{DashboardData, LinkRecord}};
+use zhorten_core::{
+    ValidCode,
+    api::{DashboardData, LinkRecord},
+};
 
 #[derive(Clone)]
 pub struct Database {
@@ -91,7 +94,7 @@ impl zhorten_service::Database for Database {
     ///
     /// The returned URL comes from the pre-update record, while the persisted
     /// record is updated atomically with a saturated click count.
-    fn follow_link(
+    async fn follow_link(
         &self,
         code: &ValidCode,
         clicked_at: i64,
@@ -177,7 +180,7 @@ mod tests {
                 .is_none()
         );
         assert_eq!(
-            database.follow_link(&record.code, 200).unwrap(),
+            database.follow_link(&record.code, 200).await.unwrap(),
             Some(record.url.clone())
         );
 
@@ -186,6 +189,12 @@ mod tests {
         assert_eq!(dashboard.links[0].last_clicked_at, Some(200));
 
         database.remove_link(&record.code).await.unwrap();
-        assert!(database.follow_link(&record.code, 300).unwrap().is_none());
+        assert!(
+            database
+                .follow_link(&record.code, 300)
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 }

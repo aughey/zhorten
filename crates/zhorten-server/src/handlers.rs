@@ -79,7 +79,7 @@ pub async fn remove_link(
 
 /// Resolve a public short code and redirect to its stored destination.
 pub async fn follow_link(State(state): State<AppState>, Path(code): Path<String>) -> Response {
-    match zhorten_service::follow_link(&state.database, code, now()) {
+    match zhorten_service::follow_link(&state.database, code, now()).await {
         Ok(url) => Redirect::temporary(&url).into_response(),
         Err(FollowLinkError::InvalidCode | FollowLinkError::NotFound) => not_found(),
         Err(FollowLinkError::Database(error)) => {

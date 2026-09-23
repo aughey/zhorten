@@ -1,7 +1,11 @@
 use std::{fmt, future::Future};
 use url::Url;
-use zhorten_core::{ValidCode, api::{DashboardData, LinkRecord}};
+use zhorten_core::{
+    ValidCode,
+    api::{DashboardData, LinkRecord},
+};
 
+/// This trait defines the interface for the database operations that are used by the application.
 pub trait Database {
     type Error: fmt::Display;
 
@@ -17,8 +21,11 @@ pub trait Database {
     fn remove_link(&self, code: &ValidCode)
     -> impl Future<Output = Result<(), Self::Error>> + Send;
 
-    fn follow_link(&self, code: &ValidCode, clicked_at: i64)
-    -> Result<Option<String>, Self::Error>;
+    fn follow_link(
+        &self,
+        code: &ValidCode,
+        clicked_at: i64,
+    ) -> impl Future<Output = Result<Option<String>, Self::Error>> + Send;
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -76,7 +83,7 @@ pub async fn remove_link<D: Database>(
         .map_err(RemoveLinkError::Database)
 }
 
-pub fn follow_link<D: Database>(
+pub async fn follow_link<D: Database>(
     database: &D,
     code: String,
     clicked_at: i64,
@@ -84,6 +91,7 @@ pub fn follow_link<D: Database>(
     let code = ValidCode::try_from(code).map_err(|_| FollowLinkError::InvalidCode)?;
     database
         .follow_link(&code, clicked_at)
+        .await
         .map_err(FollowLinkError::Database)?
         .ok_or(FollowLinkError::NotFound)
 }
@@ -145,7 +153,7 @@ mod tests {
             Ok(())
         }
 
-        fn follow_link(
+        async fn follow_link(
             &self,
             code: &ValidCode,
             clicked_at: i64,
@@ -223,15 +231,15 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            follow_link(&database, "bad/code".into(), 200),
+            follow_link(&database, "bad/code".into(), 200).await,
             Err(FollowLinkError::InvalidCode)
         );
         assert_eq!(
-            follow_link(&database, "missing".into(), 200),
+            follow_link(&database, "missing".into(), 200).await,
             Err(FollowLinkError::NotFound)
         );
         assert_eq!(
-            follow_link(&database, "docs".into(), 250).unwrap(),
+            follow_link(&database, "docs".into(), 250).await.unwrap(),
             "https://example.com/"
         );
         assert_eq!(*database.followed_at.lock().unwrap(), Some(250));
