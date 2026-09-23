@@ -21,11 +21,31 @@ The production instance runs comfortably on AWS's smallest 64-bit Arm EC2 instan
 ## Project Layout
 
 - `crates/zhorten-app` is the standalone Leptos CSR application compiled to WebAssembly.
-- `crates/zhorten-core` contains data types shared by the browser and server crates.
-- `crates/zhorten-server` is the Axum API, redirect, and static-file server.
+- `crates/zhorten-core` contains shared datatypes and API shapes used across the workspace.
+- `crates/zhorten-service` contains the transport-agnostic functional API and its validation rules.
+- `crates/zhorten-server` is the Axum API, redirect, authentication, sled storage, and static-file server.
 - `public` contains the HTML shell and source assets copied into the browser bundle.
 
 The browser and server are separate build artifacts. A normal Cargo build does not run `wasm-bindgen` or assemble the static site directory.
+
+## Architecture
+
+zhorten is organized as four crates with narrow boundaries:
+
+- `zhorten-core` is the shared contract crate. It defines route-safe short-link codes plus the JSON request and response types used by both sides of the application.
+- `zhorten-service` is the application service layer. It exposes plain Rust functions for listing, creating, deleting, and following links. It is transport-agnostic and talks to persistence only through its `Database` trait. Most of its work is delegation, with functional validation for short codes and destination URLs where needed.
+- `zhorten-server` is an Axum adapter around the service layer. It owns HTTP routing, request extraction, response/status-code mapping, sessions, security headers, static-file serving, command-line configuration, and the sled implementation of the service database trait. It should not contain app logic.
+- `zhorten-app` is the Leptos browser UI. It is client-side rendered, compiled to WebAssembly with the `csr` feature, and calls the server's same-origin JSON API using the shared shapes from `zhorten-core`.
+
+The dependency direction is intentionally simple:
+
+```text
+zhorten-app    -> zhorten-core
+zhorten-service -> zhorten-core
+zhorten-server -> zhorten-service -> zhorten-core
+```
+
+The server and app meet at the HTTP/API boundary. The server serves the static CSR bundle, but it does not render the UI, and the app does not know about sled, Axum, sessions, or deployment details.
 
 ## Build and Run from Source
 
