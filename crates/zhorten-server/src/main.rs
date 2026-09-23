@@ -52,9 +52,12 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
+    // Enable tracing for the entire application.
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
+
+    // Parse args and do early exits.
     let args = Args::parse();
     if args.healthcheck {
         std::process::exit(if healthy(args.address) { 0 } else { 1 });
@@ -64,13 +67,16 @@ async fn main() {
         std::process::exit(2);
     }
 
+    // Setup our application state with the database and authentication backend.
     let database =
         Database::open(&args.database, args.cache_capacity).expect("unable to open sled database");
     let backend = auth::Backend::new(args.username, args.password);
     let state = AppState { database };
+    // Compose the static site, public redirects, authentication endpoints, and protected API.
     let app = router(args.site_root, state, backend, args.secure_cookies);
 
-    println!("zhorten listening on http://{}", args.address);
+    // Start the server and listen for requests.
+    tracing::info!("zhorten listening on http://{}", args.address);
     let listener = tokio::net::TcpListener::bind(args.address)
         .await
         .expect("bind address");
@@ -97,6 +103,7 @@ fn router(
         .with_secure(secure_cookies)
         .with_expiry(Expiry::OnInactivity(time::Duration::days(1)));
     let auth_layer = AuthManagerLayerBuilder::new(backend, session_layer).build();
+
     // Only the JSON administration API requires a session. Redirects and the
     // browser shell stay public so short links keep working without auth.
     let protected_api = Router::new()
@@ -104,6 +111,7 @@ fn router(
         .route("/api/links/{code}", delete(remove_link))
         .route_layer(login_required!(auth::Backend));
 
+    // Compose the public routes and the protected API.
     Router::new()
         .route_service("/", ServeFile::new(index.clone()))
         .route_service("/admin", ServeFile::new(index))

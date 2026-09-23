@@ -1,3 +1,7 @@
+//! The purpose of handlers is to setup the binding between the axum http routes and the business logic
+//! implemented in the `zhorten-service` crate.  No business logic should be implemented here.  This is
+//! simply a translation layer to demartial the request and response types between the two layers.
+
 use crate::{
     auth::{AuthSession, Credentials},
     db::Database,
@@ -9,8 +13,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
 };
-use serde::{Deserialize, Serialize};
-use zhorten_core::{DashboardData, LinkRecord};
+use zhorten_core::api::{ApiError, CreateRequest, DashboardData, LinkRecord};
 use zhorten_service::{CreateLinkError, FollowLinkError, RemoveLinkError};
 
 #[derive(Clone)]
@@ -18,19 +21,8 @@ pub struct AppState {
     pub database: Database,
 }
 
-#[derive(Deserialize)]
-pub struct CreateRequest {
-    code: String,
-    url: String,
-}
-
-#[derive(Serialize)]
-pub struct ErrorBody {
-    error: String,
-}
-
-type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ErrorBody>)>;
-type HandlerResult = Result<Response, (StatusCode, Json<ErrorBody>)>;
+type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
+type HandlerResult = Result<Response, (StatusCode, Json<ApiError>)>;
 
 /// Authenticate the configured admin user and return the first dashboard payload.
 pub async fn login(
@@ -104,10 +96,10 @@ fn unauthorized<T>() -> ApiResult<T> {
     ))
 }
 
-fn error(status: StatusCode, message: &str) -> (StatusCode, Json<ErrorBody>) {
+fn error(status: StatusCode, message: &str) -> (StatusCode, Json<ApiError>) {
     (
         status,
-        Json(ErrorBody {
+        Json(ApiError {
             error: message.into(),
         }),
     )
@@ -115,7 +107,7 @@ fn error(status: StatusCode, message: &str) -> (StatusCode, Json<ErrorBody>) {
 
 fn create_link_error(
     failure: CreateLinkError<impl std::fmt::Display>,
-) -> (StatusCode, Json<ErrorBody>) {
+) -> (StatusCode, Json<ApiError>) {
     match failure {
         CreateLinkError::InvalidCode => error(
             StatusCode::BAD_REQUEST,
@@ -138,7 +130,7 @@ fn create_link_error(
 
 fn remove_link_error(
     failure: RemoveLinkError<impl std::fmt::Display>,
-) -> (StatusCode, Json<ErrorBody>) {
+) -> (StatusCode, Json<ApiError>) {
     match failure {
         RemoveLinkError::InvalidCode => error(
             StatusCode::BAD_REQUEST,
@@ -148,7 +140,7 @@ fn remove_link_error(
     }
 }
 
-fn internal_error(error: impl std::fmt::Display) -> (StatusCode, Json<ErrorBody>) {
+fn internal_error(error: impl std::fmt::Display) -> (StatusCode, Json<ApiError>) {
     tracing::error!(%error, "request failed");
     self::error(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error.")
 }

@@ -1,7 +1,7 @@
 use axum_login::{AuthUser, AuthnBackend, UserId};
 use password_auth::{generate_hash, verify_password};
-use serde::Deserialize;
 use std::{fmt, sync::Arc};
+use zhorten_core::api::LoginRequest;
 
 #[derive(Clone)]
 pub struct User {
@@ -36,11 +36,8 @@ impl AuthUser for User {
     }
 }
 
-#[derive(Deserialize)]
-pub struct Credentials {
-    pub username: String,
-    pub password: String,
-}
+/// Login credentials accepted by the authentication backend.
+pub type Credentials = LoginRequest;
 
 #[derive(Clone)]
 pub struct Backend {

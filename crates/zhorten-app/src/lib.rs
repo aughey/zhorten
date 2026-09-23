@@ -8,25 +8,8 @@ use leptos_router::{
     path,
 };
 use qrcode::{QrCode, render::svg};
-use serde::{Deserialize, Serialize};
-use zhorten_core::{DashboardData, LinkRecord};
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct ApiError {
-    error: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct LoginRequest {
-    username: String,
-    password: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct CreateRequest {
-    code: String,
-    url: String,
-}
+use serde::Deserialize;
+use zhorten_core::api::{ApiError, CreateRequest, DashboardData, LinkRecord, LoginRequest};
 
 #[cfg(feature = "csr")]
 /// Issue a same-origin JSON API request from the browser bundle.

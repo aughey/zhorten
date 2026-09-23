@@ -1,6 +1,6 @@
 use std::{fmt, future::Future};
 use url::Url;
-use zhorten_core::{DashboardData, LinkRecord, ValidCode};
+use zhorten_core::{ValidCode, api::{DashboardData, LinkRecord}};
 
 pub trait Database {
     type Error: fmt::Display;

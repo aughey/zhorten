@@ -1,6 +1,6 @@
 use std::{fmt, path::Path};
 use url::Url;
-use zhorten_core::{DashboardData, LinkRecord, ValidCode};
+use zhorten_core::{ValidCode, api::{DashboardData, LinkRecord}};
 
 #[derive(Clone)]
 pub struct Database {

@@ -1,3 +1,5 @@
+pub mod api;
+
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::fmt;
 
@@ -68,26 +70,6 @@ impl fmt::Display for InvalidCode {
 }
 
 impl std::error::Error for InvalidCode {}
-
-/// A persisted short-link record.
-///
-/// The code is validated when constructed or deserialized, so persisted and API
-/// records cannot represent an invalid route key.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct LinkRecord {
-    pub code: ValidCode,
-    pub url: String,
-    pub clicks: u64,
-    pub created_at: i64,
-    pub last_clicked_at: Option<i64>,
-}
-
-/// Data returned by the authenticated dashboard endpoint.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct DashboardData {
-    pub links: Vec<LinkRecord>,
-    pub total_clicks: u64,
-}
 
 #[cfg(test)]
 mod tests {
