@@ -1,32 +1,28 @@
+mod auth;
+mod db;
+mod handlers;
+mod helpers;
+
+use auth::Auth;
 use axum::{
-    Json, Router,
-    extract::{Path, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
-    response::{IntoResponse, Redirect, Response},
+    Router,
+    http::{HeaderValue, header},
+    response::{Redirect, Response},
     routing::{delete, get, post},
 };
 use clap::Parser;
-use rand::{RngExt, distr::Alphanumeric};
-use serde::{Deserialize, Serialize};
+use db::Database;
+use handlers::{AppState, create_link, follow_link, list_links, login, logout, remove_link};
 use std::{
-    collections::HashMap,
     io::{Read, Write},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream},
     path::PathBuf,
-    sync::{Arc, RwLock},
     time::Duration,
 };
-use time::OffsetDateTime;
 use tower_http::{
     services::{ServeDir, ServeFile},
     trace::TraceLayer,
 };
-use zhorten_core::{DashboardData, LinkRecord};
-
-const SESSION_COOKIE: &str = "zhorten_session";
-const SESSION_TOKEN_LEN: usize = 48;
-const SESSION_MAX_AGE_SECONDS: i64 = 86_400;
-const MAX_CODE_LEN: usize = 32;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "A tiny self-hosted URL shortener")]
@@ -53,39 +49,6 @@ struct Args {
     healthcheck: bool,
 }
 
-#[derive(Clone, Debug)]
-struct Session {
-    expires_at: i64,
-}
-
-#[derive(Clone)]
-struct AppState {
-    db: sled::Db,
-    username: Arc<String>,
-    password: Arc<String>,
-    sessions: Arc<RwLock<HashMap<String, Session>>>,
-    secure_cookies: bool,
-}
-
-#[derive(Deserialize)]
-struct LoginRequest {
-    username: String,
-    password: String,
-}
-
-#[derive(Deserialize)]
-struct CreateRequest {
-    code: String,
-    url: String,
-}
-
-#[derive(Serialize)]
-struct ErrorBody {
-    error: String,
-}
-
-type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ErrorBody>)>;
-
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -99,15 +62,28 @@ async fn main() {
         eprintln!("error: --password (or ZHORTEN_PASSWORD) must not be empty");
         std::process::exit(2);
     }
-    let db = sled::Config::new()
-        .path(&args.database)
-        .cache_capacity(args.cache_capacity)
-        .open()
-        .expect("unable to open sled database");
 
-    let site_root = args.site_root;
+    let database =
+        Database::open(&args.database, args.cache_capacity).expect("unable to open sled database");
+    let state = AppState {
+        database,
+        auth: Auth::new(args.username, args.password, args.secure_cookies),
+    };
+    let app = router(args.site_root, state);
+
+    println!("zhorten listening on http://{}", args.address);
+    let listener = tokio::net::TcpListener::bind(args.address)
+        .await
+        .expect("bind address");
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .expect("server error");
+}
+
+fn router(site_root: PathBuf, state: AppState) -> Router {
     let index = site_root.join("index.html");
-    let app = Router::new()
+    Router::new()
         .route_service("/", ServeFile::new(index.clone()))
         .route_service("/admin", ServeFile::new(index))
         .nest_service("/assets", ServeDir::new(site_root.join("assets")))
@@ -123,22 +99,7 @@ async fn main() {
         )
         .layer(axum::middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
-        .with_state(AppState {
-            db,
-            username: Arc::new(args.username),
-            password: Arc::new(args.password),
-            sessions: Default::default(),
-            secure_cookies: args.secure_cookies,
-        });
-
-    println!("zhorten listening on http://{}", args.address);
-    let listener = tokio::net::TcpListener::bind(args.address)
-        .await
-        .expect("bind address");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .expect("server error");
+        .with_state(state)
 }
 
 fn healthy(address: SocketAddr) -> bool {
@@ -170,273 +131,6 @@ async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
-fn cookie_token(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get(header::COOKIE)?
-        .to_str()
-        .ok()?
-        .split(';')
-        .map(str::trim)
-        .find_map(|v| v.strip_prefix(&format!("{SESSION_COOKIE}=")))
-        .filter(|token| {
-            token.len() == SESSION_TOKEN_LEN && token.bytes().all(|b| b.is_ascii_alphanumeric())
-        })
-        .map(str::to_owned)
-}
-
-fn authorized(state: &AppState, headers: &HeaderMap) -> bool {
-    cookie_token(headers).is_some_and(|token| session_is_authorized(state, &token, now()))
-}
-
-fn session_is_authorized(state: &AppState, token: &str, now: i64) -> bool {
-    let session = match state.sessions.read() {
-        Ok(sessions) => sessions.get(token).cloned(),
-        Err(error) => {
-            tracing::error!(%error, "session store lock poisoned");
-            return false;
-        }
-    };
-    let Some(session) = session else {
-        return false;
-    };
-    if session.expires_at > now {
-        return true;
-    }
-    match state.sessions.write() {
-        Ok(mut sessions) => {
-            sessions.remove(token);
-        }
-        Err(error) => tracing::error!(%error, "session store lock poisoned"),
-    }
-    false
-}
-
-fn unauthorized<T>() -> ApiResult<T> {
-    Err((
-        StatusCode::UNAUTHORIZED,
-        Json(ErrorBody {
-            error: "Invalid username or password.".into(),
-        }),
-    ))
-}
-
-async fn login(
-    State(state): State<AppState>,
-    Json(body): Json<LoginRequest>,
-) -> Result<Response, (StatusCode, Json<ErrorBody>)> {
-    let valid_user =
-        constant_time_eq::constant_time_eq(body.username.as_bytes(), state.username.as_bytes());
-    let valid_pass =
-        constant_time_eq::constant_time_eq(body.password.as_bytes(), state.password.as_bytes());
-    if !(valid_user && valid_pass) {
-        return unauthorized::<DashboardData>().map(IntoResponse::into_response);
-    }
-    let token: String = rand::rng()
-        .sample_iter(&Alphanumeric)
-        .take(SESSION_TOKEN_LEN)
-        .map(char::from)
-        .collect();
-    state.sessions.write().map_err(internal_error)?.insert(
-        token.clone(),
-        Session {
-            expires_at: now() + SESSION_MAX_AGE_SECONDS,
-        },
-    );
-    let data = dashboard(&state).map_err(internal_error)?;
-    let mut response = Json(data).into_response();
-    response.headers_mut().insert(
-        header::SET_COOKIE,
-        HeaderValue::from_str(&session_cookie(
-            &token,
-            state.secure_cookies,
-            SESSION_MAX_AGE_SECONDS,
-        ))
-        .unwrap(),
-    );
-    Ok(response)
-}
-
-async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    if let Some(token) = cookie_token(&headers) {
-        if let Ok(mut sessions) = state.sessions.write() {
-            sessions.remove(&token);
-        } else {
-            tracing::error!("session store lock poisoned");
-        }
-    }
-    let mut response = Json(serde_json::json!({"ok": true})).into_response();
-    response.headers_mut().insert(
-        header::SET_COOKIE,
-        HeaderValue::from_str(&session_cookie("", state.secure_cookies, 0)).unwrap(),
-    );
-    response
-}
-
-async fn list_links(State(state): State<AppState>, headers: HeaderMap) -> ApiResult<DashboardData> {
-    if !authorized(&state, &headers) {
-        return unauthorized();
-    }
-    dashboard(&state).map(Json).map_err(internal_error)
-}
-
-async fn create_link(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<CreateRequest>,
-) -> ApiResult<LinkRecord> {
-    if !authorized(&state, &headers) {
-        return unauthorized();
-    }
-    if !valid_code(&body.code) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorBody {
-                error: "Code must be 1-32 letters, numbers, dashes, or underscores.".into(),
-            }),
-        ));
-    }
-    let parsed = url::Url::parse(&body.url).map_err(|_| {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(ErrorBody {
-                error: "Enter a valid http:// or https:// URL.".into(),
-            }),
-        )
-    })?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorBody {
-                error: "Only http:// and https:// URLs are allowed.".into(),
-            }),
-        ));
-    }
-    let links = state.db.open_tree("links").map_err(internal_error)?;
-    if links
-        .contains_key(body.code.as_bytes())
-        .map_err(internal_error)?
-    {
-        return Err((
-            StatusCode::CONFLICT,
-            Json(ErrorBody {
-                error: "That short code is already in use.".into(),
-            }),
-        ));
-    }
-    let record = LinkRecord {
-        code: body.code.clone(),
-        url: parsed.to_string(),
-        clicks: 0,
-        created_at: now(),
-        last_clicked_at: None,
-    };
-    links
-        .insert(body.code.as_bytes(), serde_json::to_vec(&record).unwrap())
-        .map_err(internal_error)?;
-    state.db.flush_async().await.map_err(internal_error)?;
-    Ok(Json(record))
-}
-
-async fn remove_link(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(code): Path<String>,
-) -> ApiResult<serde_json::Value> {
-    if !authorized(&state, &headers) {
-        return unauthorized();
-    }
-    if !valid_code(&code) {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorBody {
-                error: "Code must be 1-32 letters, numbers, dashes, or underscores.".into(),
-            }),
-        ));
-    }
-    state
-        .db
-        .open_tree("links")
-        .map_err(internal_error)?
-        .remove(code.as_bytes())
-        .map_err(internal_error)?;
-    state.db.flush_async().await.map_err(internal_error)?;
-    Ok(Json(serde_json::json!({"ok": true})))
-}
-
-async fn follow_link(State(state): State<AppState>, Path(code): Path<String>) -> Response {
-    if !valid_code(&code) {
-        return (StatusCode::NOT_FOUND, "Short link not found").into_response();
-    }
-    let links = match state.db.open_tree("links") {
-        Ok(t) => t,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
-    let Some(bytes) = links.get(code.as_bytes()).ok().flatten() else {
-        return (StatusCode::NOT_FOUND, "Short link not found").into_response();
-    };
-    let Ok(record) = serde_json::from_slice::<LinkRecord>(&bytes) else {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    };
-    let clicked_at = now();
-    if links
-        .update_and_fetch(code.as_bytes(), |previous| {
-            let mut current =
-                previous.and_then(|value| serde_json::from_slice::<LinkRecord>(value).ok())?;
-            current.clicks = current.clicks.saturating_add(1);
-            current.last_clicked_at = Some(clicked_at);
-            serde_json::to_vec(&current).ok()
-        })
-        .is_err()
-    {
-        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-    }
-    let events = match state.db.open_tree("clicks") {
-        Ok(t) => t,
-        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    };
-    let id = state.db.generate_id().unwrap_or_default();
-    let _ = events.insert(
-        format!("{code}:{id:020}").as_bytes(),
-        clicked_at.to_be_bytes().as_slice(),
-    );
-    Redirect::temporary(&record.url).into_response()
-}
-
-fn dashboard(state: &AppState) -> Result<DashboardData, sled::Error> {
-    let links = state.db.open_tree("links")?;
-    let mut result: Vec<LinkRecord> = links
-        .iter()
-        .values()
-        .filter_map(Result::ok)
-        .filter_map(|v| serde_json::from_slice(&v).ok())
-        .collect();
-    result.sort_by_key(|r| std::cmp::Reverse(r.created_at));
-    let total_clicks = result.iter().map(|r| r.clicks).sum();
-    Ok(DashboardData {
-        links: result,
-        total_clicks,
-    })
-}
-
-fn now() -> i64 {
-    OffsetDateTime::now_utc().unix_timestamp()
-}
-
-fn valid_code(code: &str) -> bool {
-    !code.is_empty()
-        && code.len() <= MAX_CODE_LEN
-        && code
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-}
-
-fn session_cookie(token: &str, secure: bool, max_age: i64) -> String {
-    let secure_attr = if secure { "; Secure" } else { "" };
-    format!(
-        "{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}{secure_attr}"
-    )
-}
-
 async fn security_headers(
     request: axum::extract::Request,
     next: axum::middleware::Next,
@@ -458,36 +152,4 @@ async fn security_headers(
         ),
     );
     response
-}
-
-fn internal_error<E: std::fmt::Display>(error: E) -> (StatusCode, Json<ErrorBody>) {
-    tracing::error!(%error, "database error");
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(ErrorBody {
-            error: "Internal server error.".into(),
-        }),
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn valid_code_accepts_only_route_safe_codes() {
-        assert!(valid_code("abc-123_DEF"));
-        assert!(!valid_code(""));
-        assert!(!valid_code("has/slash"));
-        assert!(!valid_code("has space"));
-        assert!(!valid_code(&"a".repeat(MAX_CODE_LEN + 1)));
-    }
-
-    #[test]
-    fn session_cookie_can_be_marked_secure() {
-        let cookie = session_cookie("token", true, SESSION_MAX_AGE_SECONDS);
-        assert!(cookie.contains("HttpOnly"));
-        assert!(cookie.contains("SameSite=Strict"));
-        assert!(cookie.contains("Secure"));
-    }
 }
