@@ -15,6 +15,11 @@ pub enum Error {
 }
 
 impl Database {
+    /// Open the embedded database and its named trees.
+    ///
+    /// `links` is the authoritative store for current short links. `clicks`
+    /// keeps append-only timestamps for future analytics without changing the
+    /// dashboard API today.
     pub fn open(path: impl AsRef<Path>, cache_capacity: u64) -> Result<Self, Error> {
         let db = sled::Config::new()
             .path(path)
@@ -25,6 +30,10 @@ impl Database {
         Ok(Self { db, links, clicks })
     }
 
+    /// Load the dashboard view from persisted link records.
+    ///
+    /// Corrupt records are skipped so one bad value does not make the whole
+    /// administration page unusable.
     pub fn dashboard(&self) -> Result<DashboardData, Error> {
         let mut links: Vec<LinkRecord> = self
             .links
@@ -41,6 +50,7 @@ impl Database {
         })
     }
 
+    /// Insert a new short link if the code has not already been claimed.
     pub async fn create_link(&self, record: &LinkRecord) -> Result<bool, Error> {
         if self.links.contains_key(record.code.as_bytes())? {
             return Ok(false);
@@ -53,12 +63,17 @@ impl Database {
         Ok(true)
     }
 
+    /// Delete a short link by code.
     pub async fn remove_link(&self, code: &str) -> Result<(), Error> {
         self.links.remove(code.as_bytes())?;
         self.db.flush_async().await?;
         Ok(())
     }
 
+    /// Resolve a short code and record the click as part of the redirect path.
+    ///
+    /// The returned URL comes from the pre-update record, while the persisted
+    /// record is updated atomically with a saturated click count.
     pub fn follow_link(&self, code: &str, clicked_at: i64) -> Result<Option<String>, Error> {
         let Some(bytes) = self.links.get(code.as_bytes())? else {
             return Ok(None);
@@ -72,6 +87,9 @@ impl Database {
             serde_json::to_vec(&current).ok()
         })?;
 
+        // The separate click tree is intentionally best-effort: redirecting is
+        // more important than preserving a raw analytics event if this insert
+        // fails after the aggregate count has already been updated.
         let id = self.db.generate_id().unwrap_or_default();
         let _ = self.clicks.insert(
             format!("{code}:{id:020}").as_bytes(),

@@ -80,6 +80,7 @@ async fn main() {
         .expect("server error");
 }
 
+/// Compose the static site, public redirects, authentication endpoints, and protected API.
 fn router(
     site_root: PathBuf,
     state: AppState,
@@ -87,6 +88,8 @@ fn router(
     secure_cookies: bool,
 ) -> Router {
     let index = site_root.join("index.html");
+    // The session store is intentionally in-memory: restarting the service logs
+    // administrators out without touching the persistent link database.
     let session_layer = SessionManagerLayer::new(MemoryStore::default())
         .with_name("zhorten_session")
         .with_http_only(true)
@@ -94,6 +97,8 @@ fn router(
         .with_secure(secure_cookies)
         .with_expiry(Expiry::OnInactivity(time::Duration::days(1)));
     let auth_layer = AuthManagerLayerBuilder::new(backend, session_layer).build();
+    // Only the JSON administration API requires a session. Redirects and the
+    // browser shell stay public so short links keep working without auth.
     let protected_api = Router::new()
         .route("/api/links", get(list_links).post(create_link))
         .route("/api/links/{code}", delete(remove_link))
@@ -118,7 +123,10 @@ fn router(
         .with_state(state)
 }
 
+/// Probe the configured listener for container health checks.
 fn healthy(address: SocketAddr) -> bool {
+    // Docker may ask the process to bind on all interfaces. For an internal
+    // health probe, connect through the matching loopback family instead.
     let ip = match address.ip() {
         IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
         IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
@@ -143,10 +151,12 @@ fn healthy(address: SocketAddr) -> bool {
     })
 }
 
+/// Wait for Ctrl-C so axum can drain in-flight requests before exiting.
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
+/// Attach browser security headers to every response, including static assets.
 async fn security_headers(
     request: axum::extract::Request,
     next: axum::middleware::Next,

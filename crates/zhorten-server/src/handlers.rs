@@ -31,6 +31,7 @@ pub struct ErrorBody {
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ErrorBody>)>;
 type HandlerResult = Result<Response, (StatusCode, Json<ErrorBody>)>;
 
+/// Authenticate the configured admin user and return the first dashboard payload.
 pub async fn login(
     mut auth_session: AuthSession,
     State(state): State<AppState>,
@@ -48,15 +49,18 @@ pub async fn login(
     Ok(Json(data).into_response())
 }
 
+/// End the current browser session.
 pub async fn logout(mut auth_session: AuthSession) -> HandlerResult {
     auth_session.logout().await.map_err(internal_error)?;
     Ok(Json(serde_json::json!({"ok": true})).into_response())
 }
 
+/// Return the current dashboard state for an authenticated administrator.
 pub async fn list_links(State(state): State<AppState>) -> ApiResult<DashboardData> {
     state.database.dashboard().map(Json).map_err(internal_error)
 }
 
+/// Create a short link after validating both the route code and destination URL.
 pub async fn create_link(
     State(state): State<AppState>,
     Json(body): Json<CreateRequest>,
@@ -94,6 +98,7 @@ pub async fn create_link(
     Ok(Json(record))
 }
 
+/// Remove an existing link. Missing links are treated as a successful no-op.
 pub async fn remove_link(
     State(state): State<AppState>,
     Path(code): Path<String>,
@@ -109,6 +114,7 @@ pub async fn remove_link(
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
+/// Resolve a public short code and redirect to its stored destination.
 pub async fn follow_link(State(state): State<AppState>, Path(code): Path<String>) -> Response {
     if !valid_code(&code) {
         return not_found();

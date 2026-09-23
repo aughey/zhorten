@@ -9,6 +9,8 @@ pub struct User {
     password_hash: String,
 }
 
+// `User` appears in traces and test failures through axum-login, so redact the
+// derived output instead of relying on callers to remember not to log secrets.
 impl fmt::Debug for User {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -27,6 +29,9 @@ impl AuthUser for User {
     }
 
     fn session_auth_hash(&self) -> &[u8] {
+        // axum-login stores this hash in the session so a password change would
+        // invalidate existing sessions. This service has one startup-time user,
+        // but keeping the hook wired correctly avoids a future footgun.
         self.password_hash.as_bytes()
     }
 }
@@ -43,6 +48,9 @@ pub struct Backend {
 }
 
 impl Backend {
+    /// Build the in-memory authentication backend for the configured admin user.
+    ///
+    /// The password is hashed at startup and never persisted with the link data.
     pub fn new(username: String, password: String) -> Self {
         Self {
             user: Arc::new(User {
@@ -69,6 +77,7 @@ impl AuthnBackend for Backend {
     type Credentials = Credentials;
     type Error = Error;
 
+    /// Verify credentials off the async runtime because Argon2 is intentionally CPU-heavy.
     async fn authenticate(&self, credentials: Credentials) -> Result<Option<User>, Error> {
         let user = Arc::clone(&self.user);
         tokio::task::spawn_blocking(move || {
@@ -86,6 +95,7 @@ impl AuthnBackend for Backend {
     }
 }
 
+/// Session extractor used by request handlers after axum-login layers are installed.
 pub type AuthSession = axum_login::AuthSession<Backend>;
 
 #[cfg(test)]

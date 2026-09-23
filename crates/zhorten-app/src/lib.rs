@@ -29,6 +29,10 @@ struct CreateRequest {
 }
 
 #[cfg(feature = "csr")]
+/// Issue a same-origin JSON API request from the browser bundle.
+///
+/// A 401 is normalized to the sentinel string `"unauthorized"` because the UI
+/// uses that response to switch between the login and dashboard screens.
 async fn api<T: for<'de> Deserialize<'de>>(
     method: &str,
     path: &str,
@@ -73,6 +77,7 @@ async fn api<T: for<'de> Deserialize<'de>>(
 }
 
 #[component]
+/// Root Leptos component with the public home page and admin console routes.
 pub fn App() -> impl IntoView {
     provide_meta_context();
     view! {
@@ -119,6 +124,8 @@ fn Admin() -> impl IntoView {
 
     #[cfg(feature = "csr")]
     Effect::new(move |_| {
+        // On page load, try the protected endpoint first. A valid session skips
+        // the login form; an expired or missing session lands on the login view.
         leptos::task::spawn_local(async move {
             match api::<DashboardData>("GET", "/api/links", None).await {
                 Ok(value) => {
@@ -208,6 +215,8 @@ fn Dashboard(
     let (url, set_url) = signal(String::new());
     let (busy, set_busy) = signal(false);
 
+    // Keep list reloading in one closure so create/delete flows can share the
+    // same error handling and preserve the current authenticated state.
     let refresh = move || {
         #[cfg(feature = "csr")]
         leptos::task::spawn_local(async move {
@@ -294,6 +303,8 @@ fn LinkRow(
         let code = code_for_delete.clone();
         #[cfg(feature = "csr")]
         {
+            // Confirmation lives client-side because delete is intentionally a
+            // simple API no-op for missing codes.
             let confirmed = web_sys::window()
                 .and_then(|window| {
                     window
@@ -342,6 +353,8 @@ fn LinkTools(short_path: String) -> impl IntoView {
     let (show_qr, set_show_qr) = signal(false);
     let (copied, set_copied) = signal(false);
     let copy_button_path = short_path.clone();
+    // Store the modal path outside the reactive closure so QR generation keeps a
+    // stable value even while the row is re-rendered.
     let modal_path = StoredValue::new(short_path.clone());
 
     view! {
@@ -379,6 +392,7 @@ fn copy_short_url(path: &str, set_copied: WriteSignal<bool>) {
     }
 }
 
+/// Turn an app-relative short path into a shareable URL when running in a browser.
 fn absolute_short_url(path: &str) -> String {
     #[cfg(feature = "csr")]
     if let Some(window) = web_sys::window()
@@ -389,6 +403,7 @@ fn absolute_short_url(path: &str) -> String {
     path.to_owned()
 }
 
+/// Render a QR code as SVG markup for direct insertion into the modal.
 fn qr_svg(value: &str) -> String {
     QrCode::new(value.as_bytes())
         .map(|code| {
@@ -401,6 +416,7 @@ fn qr_svg(value: &str) -> String {
         .unwrap_or_else(|_| "<p>Unable to generate QR code.</p>".into())
 }
 
+/// Format Unix timestamps for the browser UI, with a plain fallback for non-CSR builds.
 fn format_date(timestamp: i64) -> String {
     #[cfg(feature = "csr")]
     {
