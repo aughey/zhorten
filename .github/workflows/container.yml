@@ -13,8 +13,22 @@ permissions:
   packages: write
 
 jobs:
+  test:
+    name: cargo test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Run tests
+        run: cargo test --locked --release --workspace --exclude zhorten-app
+
   build:
     name: Build ${{ matrix.platform }}
+    needs: test
     strategy:
       fail-fast: false
       matrix:
