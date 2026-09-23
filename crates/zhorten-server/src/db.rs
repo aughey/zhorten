@@ -1,5 +1,5 @@
 use std::{fmt, path::Path};
-use zhorten_core::{DashboardData, LinkRecord};
+use zhorten_core::{DashboardData, LinkRecord, ValidCode};
 
 #[derive(Clone)]
 pub struct Database {
@@ -50,22 +50,34 @@ impl Database {
         })
     }
 
-    /// Insert a new short link if the code has not already been claimed.
-    pub async fn create_link(&self, record: &LinkRecord) -> Result<bool, Error> {
-        if self.links.contains_key(record.code.as_bytes())? {
-            return Ok(false);
+    /// Build and insert a new short link if the validated code is available.
+    pub async fn create_link(
+        &self,
+        code: ValidCode,
+        url: String,
+        created_at: i64,
+    ) -> Result<Option<LinkRecord>, Error> {
+        if self.links.contains_key(code.as_str().as_bytes())? {
+            return Ok(None);
         }
+        let record = LinkRecord {
+            code,
+            url,
+            clicks: 0,
+            created_at,
+            last_clicked_at: None,
+        };
         self.links.insert(
-            record.code.as_bytes(),
-            serde_json::to_vec(record)?.as_slice(),
+            record.code.as_str().as_bytes(),
+            serde_json::to_vec(&record)?.as_slice(),
         )?;
         self.db.flush_async().await?;
-        Ok(true)
+        Ok(Some(record))
     }
 
     /// Delete a short link by code.
-    pub async fn remove_link(&self, code: &str) -> Result<(), Error> {
-        self.links.remove(code.as_bytes())?;
+    pub async fn remove_link(&self, code: &ValidCode) -> Result<(), Error> {
+        self.links.remove(code.as_str().as_bytes())?;
         self.db.flush_async().await?;
         Ok(())
     }
@@ -74,18 +86,19 @@ impl Database {
     ///
     /// The returned URL comes from the pre-update record, while the persisted
     /// record is updated atomically with a saturated click count.
-    pub fn follow_link(&self, code: &str, clicked_at: i64) -> Result<Option<String>, Error> {
-        let Some(bytes) = self.links.get(code.as_bytes())? else {
+    pub fn follow_link(&self, code: &ValidCode, clicked_at: i64) -> Result<Option<String>, Error> {
+        let Some(bytes) = self.links.get(code.as_str().as_bytes())? else {
             return Ok(None);
         };
         let record = serde_json::from_slice::<LinkRecord>(&bytes)?;
-        self.links.update_and_fetch(code.as_bytes(), |previous| {
-            let mut current =
-                previous.and_then(|value| serde_json::from_slice::<LinkRecord>(value).ok())?;
-            current.clicks = current.clicks.saturating_add(1);
-            current.last_clicked_at = Some(clicked_at);
-            serde_json::to_vec(&current).ok()
-        })?;
+        self.links
+            .update_and_fetch(code.as_str().as_bytes(), |previous| {
+                let mut current =
+                    previous.and_then(|value| serde_json::from_slice::<LinkRecord>(value).ok())?;
+                current.clicks = current.clicks.saturating_add(1);
+                current.last_clicked_at = Some(clicked_at);
+                serde_json::to_vec(&current).ok()
+            })?;
 
         // The separate click tree is intentionally best-effort: redirecting is
         // more important than preserving a raw analytics event if this insert
@@ -137,17 +150,31 @@ mod tests {
     async fn link_lifecycle_updates_dashboard_and_clicks() {
         let database = temporary_database();
         let record = LinkRecord {
-            code: "docs".into(),
+            code: ValidCode::try_from("docs").unwrap(),
             url: "https://example.com/".into(),
             clicks: 0,
             created_at: 100,
             last_clicked_at: None,
         };
 
-        assert!(database.create_link(&record).await.unwrap());
-        assert!(!database.create_link(&record).await.unwrap());
         assert_eq!(
-            database.follow_link("docs", 200).unwrap(),
+            database
+                .create_link(record.code.clone(), record.url.clone(), record.created_at)
+                .await
+                .unwrap()
+                .unwrap()
+                .code,
+            record.code
+        );
+        assert!(
+            database
+                .create_link(record.code.clone(), record.url.clone(), record.created_at)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            database.follow_link(&record.code, 200).unwrap(),
             Some(record.url.clone())
         );
 
@@ -155,7 +182,7 @@ mod tests {
         assert_eq!(dashboard.total_clicks, 1);
         assert_eq!(dashboard.links[0].last_clicked_at, Some(200));
 
-        database.remove_link("docs").await.unwrap();
-        assert!(database.follow_link("docs", 300).unwrap().is_none());
+        database.remove_link(&record.code).await.unwrap();
+        assert!(database.follow_link(&record.code, 300).unwrap().is_none());
     }
 }

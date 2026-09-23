@@ -1,7 +1,7 @@
 use crate::{
     auth::{AuthSession, Credentials},
     db::Database,
-    helpers::{now, valid_code},
+    helpers::now,
 };
 use axum::{
     Json,
@@ -10,7 +10,7 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use serde::{Deserialize, Serialize};
-use zhorten_core::{DashboardData, LinkRecord};
+use zhorten_core::{DashboardData, LinkRecord, ValidCode};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -65,9 +65,9 @@ pub async fn create_link(
     State(state): State<AppState>,
     Json(body): Json<CreateRequest>,
 ) -> ApiResult<LinkRecord> {
-    if !valid_code(&body.code) {
-        return bad_request("Code must be 1-32 letters, numbers, dashes, or underscores.");
-    }
+    let code = ValidCode::try_from(body.code).map_err(|_| {
+        bad_request_error("Code must be 1-32 letters, numbers, dashes, or underscores.")
+    })?;
     let parsed = url::Url::parse(&body.url).map_err(|_| {
         error(
             StatusCode::BAD_REQUEST,
@@ -77,24 +77,17 @@ pub async fn create_link(
     if !matches!(parsed.scheme(), "http" | "https") {
         return bad_request("Only http:// and https:// URLs are allowed.");
     }
-    let record = LinkRecord {
-        code: body.code,
-        url: parsed.to_string(),
-        clicks: 0,
-        created_at: now(),
-        last_clicked_at: None,
-    };
-    if !state
+    let Some(record) = state
         .database
-        .create_link(&record)
+        .create_link(code, parsed.to_string(), now())
         .await
         .map_err(internal_error)?
-    {
+    else {
         return Err(error(
             StatusCode::CONFLICT,
             "That short code is already in use.",
         ));
-    }
+    };
     Ok(Json(record))
 }
 
@@ -103,9 +96,9 @@ pub async fn remove_link(
     State(state): State<AppState>,
     Path(code): Path<String>,
 ) -> ApiResult<serde_json::Value> {
-    if !valid_code(&code) {
-        return bad_request("Code must be 1-32 letters, numbers, dashes, or underscores.");
-    }
+    let code = ValidCode::try_from(code).map_err(|_| {
+        bad_request_error("Code must be 1-32 letters, numbers, dashes, or underscores.")
+    })?;
     state
         .database
         .remove_link(&code)
@@ -116,9 +109,9 @@ pub async fn remove_link(
 
 /// Resolve a public short code and redirect to its stored destination.
 pub async fn follow_link(State(state): State<AppState>, Path(code): Path<String>) -> Response {
-    if !valid_code(&code) {
+    let Ok(code) = ValidCode::try_from(code) else {
         return not_found();
-    }
+    };
     match state.database.follow_link(&code, now()) {
         Ok(Some(url)) => Redirect::temporary(&url).into_response(),
         Ok(None) => not_found(),
@@ -138,6 +131,10 @@ fn unauthorized<T>() -> ApiResult<T> {
 
 fn bad_request<T>(message: &str) -> ApiResult<T> {
     Err(error(StatusCode::BAD_REQUEST, message))
+}
+
+fn bad_request_error(message: &str) -> (StatusCode, Json<ErrorBody>) {
+    error(StatusCode::BAD_REQUEST, message)
 }
 
 fn error(status: StatusCode, message: &str) -> (StatusCode, Json<ErrorBody>) {
