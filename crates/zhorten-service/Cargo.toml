@@ -1,0 +1,11 @@
+[package]
+name = "zhorten-service"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+url = "2.5.8"
+zhorten-core.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["macros", "rt"] }

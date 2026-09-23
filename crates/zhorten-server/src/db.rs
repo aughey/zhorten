@@ -1,4 +1,5 @@
 use std::{fmt, path::Path};
+use url::Url;
 use zhorten_core::{DashboardData, LinkRecord, ValidCode};
 
 #[derive(Clone)]
@@ -29,12 +30,16 @@ impl Database {
         let clicks = db.open_tree("clicks")?;
         Ok(Self { db, links, clicks })
     }
+}
+
+impl zhorten_service::Database for Database {
+    type Error = Error;
 
     /// Load the dashboard view from persisted link records.
     ///
     /// Corrupt records are skipped so one bad value does not make the whole
     /// administration page unusable.
-    pub fn dashboard(&self) -> Result<DashboardData, Error> {
+    fn dashboard(&self) -> Result<DashboardData, Self::Error> {
         let mut links: Vec<LinkRecord> = self
             .links
             .iter()
@@ -51,18 +56,18 @@ impl Database {
     }
 
     /// Build and insert a new short link if the validated code is available.
-    pub async fn create_link(
+    async fn create_link(
         &self,
         code: ValidCode,
-        url: String,
+        url: Url,
         created_at: i64,
-    ) -> Result<Option<LinkRecord>, Error> {
+    ) -> Result<Option<LinkRecord>, Self::Error> {
         if self.links.contains_key(code.as_str().as_bytes())? {
             return Ok(None);
         }
         let record = LinkRecord {
             code,
-            url,
+            url: url.to_string(),
             clicks: 0,
             created_at,
             last_clicked_at: None,
@@ -76,7 +81,7 @@ impl Database {
     }
 
     /// Delete a short link by code.
-    pub async fn remove_link(&self, code: &ValidCode) -> Result<(), Error> {
+    async fn remove_link(&self, code: &ValidCode) -> Result<(), Self::Error> {
         self.links.remove(code.as_str().as_bytes())?;
         self.db.flush_async().await?;
         Ok(())
@@ -86,7 +91,11 @@ impl Database {
     ///
     /// The returned URL comes from the pre-update record, while the persisted
     /// record is updated atomically with a saturated click count.
-    pub fn follow_link(&self, code: &ValidCode, clicked_at: i64) -> Result<Option<String>, Error> {
+    fn follow_link(
+        &self,
+        code: &ValidCode,
+        clicked_at: i64,
+    ) -> Result<Option<String>, Self::Error> {
         let Some(bytes) = self.links.get(code.as_str().as_bytes())? else {
             return Ok(None);
         };
@@ -138,6 +147,7 @@ impl std::error::Error for Error {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zhorten_service::Database as _;
 
     fn temporary_database() -> Database {
         let db = sled::Config::new().temporary(true).open().unwrap();
@@ -149,26 +159,19 @@ mod tests {
     #[tokio::test]
     async fn link_lifecycle_updates_dashboard_and_clicks() {
         let database = temporary_database();
-        let record = LinkRecord {
-            code: ValidCode::try_from("docs").unwrap(),
-            url: "https://example.com/".into(),
-            clicks: 0,
-            created_at: 100,
-            last_clicked_at: None,
-        };
+        let code = ValidCode::try_from("docs").unwrap();
+        let url = Url::parse("https://example.com/").unwrap();
 
-        assert_eq!(
-            database
-                .create_link(record.code.clone(), record.url.clone(), record.created_at)
-                .await
-                .unwrap()
-                .unwrap()
-                .code,
-            record.code
-        );
+        let record = database
+            .create_link(code.clone(), url.clone(), 100)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(record.code, code);
+        assert_eq!(record.url, url.as_str());
         assert!(
             database
-                .create_link(record.code.clone(), record.url.clone(), record.created_at)
+                .create_link(code, url, 100)
                 .await
                 .unwrap()
                 .is_none()

@@ -10,7 +10,8 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use serde::{Deserialize, Serialize};
-use zhorten_core::{DashboardData, LinkRecord, ValidCode};
+use zhorten_core::{DashboardData, LinkRecord};
+use zhorten_service::{CreateLinkError, FollowLinkError, RemoveLinkError};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -45,7 +46,7 @@ pub async fn login(
         return unauthorized::<DashboardData>().map(IntoResponse::into_response);
     };
     auth_session.login(&user).await.map_err(internal_error)?;
-    let data = state.database.dashboard().map_err(internal_error)?;
+    let data = zhorten_service::list_links(&state.database).map_err(internal_error)?;
     Ok(Json(data).into_response())
 }
 
@@ -57,7 +58,9 @@ pub async fn logout(mut auth_session: AuthSession) -> HandlerResult {
 
 /// Return the current dashboard state for an authenticated administrator.
 pub async fn list_links(State(state): State<AppState>) -> ApiResult<DashboardData> {
-    state.database.dashboard().map(Json).map_err(internal_error)
+    zhorten_service::list_links(&state.database)
+        .map(Json)
+        .map_err(internal_error)
 }
 
 /// Create a short link after validating both the route code and destination URL.
@@ -65,30 +68,10 @@ pub async fn create_link(
     State(state): State<AppState>,
     Json(body): Json<CreateRequest>,
 ) -> ApiResult<LinkRecord> {
-    let code = ValidCode::try_from(body.code).map_err(|_| {
-        bad_request_error("Code must be 1-32 letters, numbers, dashes, or underscores.")
-    })?;
-    let parsed = url::Url::parse(&body.url).map_err(|_| {
-        error(
-            StatusCode::BAD_REQUEST,
-            "Enter a valid http:// or https:// URL.",
-        )
-    })?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return bad_request("Only http:// and https:// URLs are allowed.");
-    }
-    let Some(record) = state
-        .database
-        .create_link(code, parsed.to_string(), now())
+    zhorten_service::create_link(&state.database, body.code, body.url, now())
         .await
-        .map_err(internal_error)?
-    else {
-        return Err(error(
-            StatusCode::CONFLICT,
-            "That short code is already in use.",
-        ));
-    };
-    Ok(Json(record))
+        .map(Json)
+        .map_err(create_link_error)
 }
 
 /// Remove an existing link. Missing links are treated as a successful no-op.
@@ -96,27 +79,19 @@ pub async fn remove_link(
     State(state): State<AppState>,
     Path(code): Path<String>,
 ) -> ApiResult<serde_json::Value> {
-    let code = ValidCode::try_from(code).map_err(|_| {
-        bad_request_error("Code must be 1-32 letters, numbers, dashes, or underscores.")
-    })?;
-    state
-        .database
-        .remove_link(&code)
+    zhorten_service::remove_link(&state.database, code)
         .await
-        .map_err(internal_error)?;
-    Ok(Json(serde_json::json!({"ok": true})))
+        .map(|_| Json(serde_json::json!({"ok": true})))
+        .map_err(remove_link_error)
 }
 
 /// Resolve a public short code and redirect to its stored destination.
 pub async fn follow_link(State(state): State<AppState>, Path(code): Path<String>) -> Response {
-    let Ok(code) = ValidCode::try_from(code) else {
-        return not_found();
-    };
-    match state.database.follow_link(&code, now()) {
-        Ok(Some(url)) => Redirect::temporary(&url).into_response(),
-        Ok(None) => not_found(),
-        Err(error) => {
-            tracing::error!(%error, "database request failed");
+    match zhorten_service::follow_link(&state.database, code, now()) {
+        Ok(url) => Redirect::temporary(&url).into_response(),
+        Err(FollowLinkError::InvalidCode | FollowLinkError::NotFound) => not_found(),
+        Err(FollowLinkError::Database(error)) => {
+            tracing::error!(%error, "request failed");
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
@@ -129,14 +104,6 @@ fn unauthorized<T>() -> ApiResult<T> {
     ))
 }
 
-fn bad_request<T>(message: &str) -> ApiResult<T> {
-    Err(error(StatusCode::BAD_REQUEST, message))
-}
-
-fn bad_request_error(message: &str) -> (StatusCode, Json<ErrorBody>) {
-    error(StatusCode::BAD_REQUEST, message)
-}
-
 fn error(status: StatusCode, message: &str) -> (StatusCode, Json<ErrorBody>) {
     (
         status,
@@ -144,6 +111,41 @@ fn error(status: StatusCode, message: &str) -> (StatusCode, Json<ErrorBody>) {
             error: message.into(),
         }),
     )
+}
+
+fn create_link_error(
+    failure: CreateLinkError<impl std::fmt::Display>,
+) -> (StatusCode, Json<ErrorBody>) {
+    match failure {
+        CreateLinkError::InvalidCode => error(
+            StatusCode::BAD_REQUEST,
+            "Code must be 1-32 letters, numbers, dashes, or underscores.",
+        ),
+        CreateLinkError::InvalidUrl => error(
+            StatusCode::BAD_REQUEST,
+            "Enter a valid http:// or https:// URL.",
+        ),
+        CreateLinkError::UnsupportedUrlScheme => error(
+            StatusCode::BAD_REQUEST,
+            "Only http:// and https:// URLs are allowed.",
+        ),
+        CreateLinkError::Conflict => {
+            error(StatusCode::CONFLICT, "That short code is already in use.")
+        }
+        CreateLinkError::Database(error) => internal_error(error),
+    }
+}
+
+fn remove_link_error(
+    failure: RemoveLinkError<impl std::fmt::Display>,
+) -> (StatusCode, Json<ErrorBody>) {
+    match failure {
+        RemoveLinkError::InvalidCode => error(
+            StatusCode::BAD_REQUEST,
+            "Code must be 1-32 letters, numbers, dashes, or underscores.",
+        ),
+        RemoveLinkError::Database(error) => internal_error(error),
+    }
 }
 
 fn internal_error(error: impl std::fmt::Display) -> (StatusCode, Json<ErrorBody>) {

@@ -2992,6 +2992,16 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "zhorten-core",
+ "zhorten-service",
+]
+
+[[package]]
+name = "zhorten-service"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+ "url",
+ "zhorten-core",
 ]
 
 [[package]]
