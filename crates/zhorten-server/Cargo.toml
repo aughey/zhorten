@@ -8,17 +8,17 @@ name = "zhorten"
 path = "src/main.rs"
 
 [dependencies]
-axum = { version = "0.8.9", features = ["macros"] }
+axum = "0.8.9"
+axum-login = "0.18.0"
 clap = { version = "4.6.7", features = ["derive", "env"] }
-constant_time_eq = "0.6.0"
-http = "1.5.0"
-rand = "0.10.3"
+password-auth = "1.0.0"
 serde.workspace = true
 serde_json.workspace = true
 sled = "0.34.7"
-time = { version = "0.3.55", features = ["formatting"] }
+time = "0.3.55"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal"] }
 tower-http = { version = "0.7.1", features = ["fs", "trace"] }
+tower-sessions = { version = "0.14.0", default-features = false, features = ["memory-store"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url = "2.5.8"

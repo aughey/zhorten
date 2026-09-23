@@ -11,7 +11,7 @@ The production instance runs comfortably on AWS's smallest 64-bit Arm EC2 instan
 - Static client-side Leptos app served by a tight Rust API server
 - One self-contained service with no external database
 - Compatible `/code` and `/z/code` redirect paths
-- Password-protected administration screen
+- Password-protected administration screen using `axum-login`
 - Click counts and last-click timestamps
 - QR code generation
 - Persistent embedded storage
@@ -90,7 +90,7 @@ The command-line options are also available through environment variables:
 | `--site-root` | `ZHORTEN_SITE_ROOT` | `./target/site` |
 | `--secure-cookies` | `ZHORTEN_SECURE_COOKIES` | `false` |
 
-The password is supplied at startup and is never written to the database. Sessions are held in memory and end when their one-day cookie expires or the service restarts.
+The password is supplied at startup, converted to an Argon2 hash, and never written to the database. Authentication is managed by `axum-login` with a `tower-sessions` in-memory store. Sessions end when their one-day cookie expires or the service restarts.
 
 ## Run with Docker
 

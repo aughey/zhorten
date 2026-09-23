@@ -1,122 +1,120 @@
-use crate::helpers::{SESSION_MAX_AGE_SECONDS, SESSION_TOKEN_LEN, cookie_token, now};
-use axum::http::HeaderMap;
-use rand::{RngExt, distr::Alphanumeric};
-use std::{
-    collections::HashMap,
-    sync::{Arc, RwLock},
-};
+use axum_login::{AuthUser, AuthnBackend, UserId};
+use password_auth::{generate_hash, verify_password};
+use serde::Deserialize;
+use std::{fmt, sync::Arc};
 
-#[derive(Clone, Debug)]
-struct Session {
-    expires_at: i64,
+#[derive(Clone)]
+pub struct User {
+    username: String,
+    password_hash: String,
+}
+
+impl fmt::Debug for User {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("User")
+            .field("username", &self.username)
+            .field("password_hash", &"[redacted]")
+            .finish()
+    }
+}
+
+impl AuthUser for User {
+    type Id = String;
+
+    fn id(&self) -> Self::Id {
+        self.username.clone()
+    }
+
+    fn session_auth_hash(&self) -> &[u8] {
+        self.password_hash.as_bytes()
+    }
+}
+
+#[derive(Deserialize)]
+pub struct Credentials {
+    pub username: String,
+    pub password: String,
 }
 
 #[derive(Clone)]
-pub struct Auth {
-    username: Arc<String>,
-    password: Arc<String>,
-    sessions: Arc<RwLock<HashMap<String, Session>>>,
-    secure_cookies: bool,
+pub struct Backend {
+    user: Arc<User>,
 }
 
-impl Auth {
-    pub fn new(username: String, password: String, secure_cookies: bool) -> Self {
+impl Backend {
+    pub fn new(username: String, password: String) -> Self {
         Self {
-            username: Arc::new(username),
-            password: Arc::new(password),
-            sessions: Default::default(),
-            secure_cookies,
+            user: Arc::new(User {
+                username,
+                password_hash: generate_hash(password),
+            }),
         }
-    }
-
-    pub fn credentials_are_valid(&self, username: &str, password: &str) -> bool {
-        constant_time_eq::constant_time_eq(username.as_bytes(), self.username.as_bytes())
-            && constant_time_eq::constant_time_eq(password.as_bytes(), self.password.as_bytes())
-    }
-
-    pub fn create_session(&self) -> Result<String, &'static str> {
-        let token: String = rand::rng()
-            .sample_iter(&Alphanumeric)
-            .take(SESSION_TOKEN_LEN)
-            .map(char::from)
-            .collect();
-        self.sessions
-            .write()
-            .map_err(|_| "session store lock poisoned")?
-            .insert(
-                token.clone(),
-                Session {
-                    expires_at: now() + SESSION_MAX_AGE_SECONDS,
-                },
-            );
-        Ok(token)
-    }
-
-    pub fn authorized(&self, headers: &HeaderMap) -> bool {
-        cookie_token(headers).is_some_and(|token| self.session_is_authorized(&token, now()))
-    }
-
-    pub fn remove_session(&self, headers: &HeaderMap) {
-        let Some(token) = cookie_token(headers) else {
-            return;
-        };
-        match self.sessions.write() {
-            Ok(mut sessions) => {
-                sessions.remove(&token);
-            }
-            Err(error) => tracing::error!(%error, "session store lock poisoned"),
-        }
-    }
-
-    pub fn secure_cookies(&self) -> bool {
-        self.secure_cookies
-    }
-
-    fn session_is_authorized(&self, token: &str, current_time: i64) -> bool {
-        let session = match self.sessions.read() {
-            Ok(sessions) => sessions.get(token).cloned(),
-            Err(error) => {
-                tracing::error!(%error, "session store lock poisoned");
-                return false;
-            }
-        };
-        let Some(session) = session else {
-            return false;
-        };
-        if session.expires_at > current_time {
-            return true;
-        }
-        match self.sessions.write() {
-            Ok(mut sessions) => {
-                sessions.remove(token);
-            }
-            Err(error) => tracing::error!(%error, "session store lock poisoned"),
-        }
-        false
     }
 }
+
+#[derive(Debug)]
+pub struct Error(tokio::task::JoinError);
+
+impl fmt::Display for Error {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "password verification task failed: {}", self.0)
+    }
+}
+
+impl std::error::Error for Error {}
+
+impl AuthnBackend for Backend {
+    type User = User;
+    type Credentials = Credentials;
+    type Error = Error;
+
+    async fn authenticate(&self, credentials: Credentials) -> Result<Option<User>, Error> {
+        let user = Arc::clone(&self.user);
+        tokio::task::spawn_blocking(move || {
+            let username_matches = credentials.username == user.username;
+            let password_matches =
+                verify_password(credentials.password, &user.password_hash).is_ok();
+            (username_matches && password_matches).then(|| (*user).clone())
+        })
+        .await
+        .map_err(Error)
+    }
+
+    async fn get_user(&self, user_id: &UserId<Self>) -> Result<Option<User>, Error> {
+        Ok((user_id == &self.user.username).then(|| (*self.user).clone()))
+    }
+}
+
+pub type AuthSession = axum_login::AuthSession<Backend>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::helpers::SESSION_COOKIE;
-    use axum::http::{HeaderValue, header};
 
-    #[test]
-    fn session_lifecycle_authorizes_then_removes_token() {
-        let auth = Auth::new("admin".into(), "secret".into(), true);
-        assert!(auth.credentials_are_valid("admin", "secret"));
-        assert!(!auth.credentials_are_valid("admin", "wrong"));
+    #[tokio::test]
+    async fn backend_authenticates_only_the_configured_user() {
+        let backend = Backend::new("admin".into(), "secret".into());
 
-        let token = auth.create_session().unwrap();
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            header::COOKIE,
-            HeaderValue::from_str(&format!("{SESSION_COOKIE}={token}")).unwrap(),
+        let user = backend
+            .authenticate(Credentials {
+                username: "admin".into(),
+                password: "secret".into(),
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(user.id(), "admin");
+        assert!(
+            backend
+                .authenticate(Credentials {
+                    username: "admin".into(),
+                    password: "wrong".into(),
+                })
+                .await
+                .unwrap()
+                .is_none()
         );
-        assert!(auth.authorized(&headers));
-
-        auth.remove_session(&headers);
-        assert!(!auth.authorized(&headers));
+        assert!(backend.get_user(&"admin".into()).await.unwrap().is_some());
     }
 }

@@ -1,12 +1,12 @@
 use crate::{
-    auth::Auth,
+    auth::{AuthSession, Credentials},
     db::Database,
-    helpers::{SESSION_MAX_AGE_SECONDS, now, session_cookie, valid_code},
+    helpers::{now, valid_code},
 };
 use axum::{
     Json,
     extract::{Path, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    http::StatusCode,
     response::{IntoResponse, Redirect, Response},
 };
 use serde::{Deserialize, Serialize};
@@ -15,13 +15,6 @@ use zhorten_core::{DashboardData, LinkRecord};
 #[derive(Clone)]
 pub struct AppState {
     pub database: Database,
-    pub auth: Auth,
-}
-
-#[derive(Deserialize)]
-pub struct LoginRequest {
-    username: String,
-    password: String,
 }
 
 #[derive(Deserialize)]
@@ -38,57 +31,36 @@ pub struct ErrorBody {
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ErrorBody>)>;
 type HandlerResult = Result<Response, (StatusCode, Json<ErrorBody>)>;
 
-pub async fn login(State(state): State<AppState>, Json(body): Json<LoginRequest>) -> HandlerResult {
-    if !state
-        .auth
-        .credentials_are_valid(&body.username, &body.password)
-    {
-        return unauthorized::<DashboardData>().map(IntoResponse::into_response);
-    }
-    let token = state.auth.create_session().map_err(internal_error)?;
-    let data = state.database.dashboard().map_err(internal_error)?;
-    let mut response = Json(data).into_response();
-    response.headers_mut().insert(
-        header::SET_COOKIE,
-        HeaderValue::from_str(&session_cookie(
-            &token,
-            state.auth.secure_cookies(),
-            SESSION_MAX_AGE_SECONDS,
-        ))
-        .expect("session cookie is a valid header value"),
-    );
-    Ok(response)
-}
-
-pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    state.auth.remove_session(&headers);
-    let mut response = Json(serde_json::json!({"ok": true})).into_response();
-    response.headers_mut().insert(
-        header::SET_COOKIE,
-        HeaderValue::from_str(&session_cookie("", state.auth.secure_cookies(), 0))
-            .expect("expired session cookie is a valid header value"),
-    );
-    response
-}
-
-pub async fn list_links(
+pub async fn login(
+    mut auth_session: AuthSession,
     State(state): State<AppState>,
-    headers: HeaderMap,
-) -> ApiResult<DashboardData> {
-    if !state.auth.authorized(&headers) {
-        return unauthorized();
-    }
+    Json(credentials): Json<Credentials>,
+) -> HandlerResult {
+    let Some(user) = auth_session
+        .authenticate(credentials)
+        .await
+        .map_err(internal_error)?
+    else {
+        return unauthorized::<DashboardData>().map(IntoResponse::into_response);
+    };
+    auth_session.login(&user).await.map_err(internal_error)?;
+    let data = state.database.dashboard().map_err(internal_error)?;
+    Ok(Json(data).into_response())
+}
+
+pub async fn logout(mut auth_session: AuthSession) -> HandlerResult {
+    auth_session.logout().await.map_err(internal_error)?;
+    Ok(Json(serde_json::json!({"ok": true})).into_response())
+}
+
+pub async fn list_links(State(state): State<AppState>) -> ApiResult<DashboardData> {
     state.database.dashboard().map(Json).map_err(internal_error)
 }
 
 pub async fn create_link(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Json(body): Json<CreateRequest>,
 ) -> ApiResult<LinkRecord> {
-    if !state.auth.authorized(&headers) {
-        return unauthorized();
-    }
     if !valid_code(&body.code) {
         return bad_request("Code must be 1-32 letters, numbers, dashes, or underscores.");
     }
@@ -124,12 +96,8 @@ pub async fn create_link(
 
 pub async fn remove_link(
     State(state): State<AppState>,
-    headers: HeaderMap,
     Path(code): Path<String>,
 ) -> ApiResult<serde_json::Value> {
-    if !state.auth.authorized(&headers) {
-        return unauthorized();
-    }
     if !valid_code(&code) {
         return bad_request("Code must be 1-32 letters, numbers, dashes, or underscores.");
     }
