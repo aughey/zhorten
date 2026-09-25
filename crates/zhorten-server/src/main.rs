@@ -2,10 +2,12 @@ mod auth;
 mod db;
 mod handlers;
 mod helpers;
+mod mcp;
 
 use axum::{
     Router,
     http::{HeaderValue, header},
+    middleware,
     response::{Redirect, Response},
     routing::{delete, get, post},
 };
@@ -13,6 +15,7 @@ use axum_login::{AuthManagerLayerBuilder, login_required};
 use clap::Parser;
 use db::Database;
 use handlers::{AppState, create_link, follow_link, list_links, login, logout, remove_link};
+use mcp::BearerToken;
 use std::{
     io::{Read, Write},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream},
@@ -40,6 +43,9 @@ struct Args {
     address: SocketAddr,
     #[arg(long, env = "ZHORTEN_SITE_ROOT", default_value = "./target/site")]
     site_root: PathBuf,
+    /// Enable the MCP endpoint at /mcp using this bearer token.
+    #[arg(long, env = "ZHORTEN_MCP", hide_env_values = true)]
+    mcp: Option<String>,
     /// Add the Secure attribute to session cookies.
     ///
     /// Enable this when zhorten is served through HTTPS. Leave it disabled for
@@ -66,6 +72,14 @@ async fn main() {
         eprintln!("error: --password (or ZHORTEN_PASSWORD) must not be empty");
         std::process::exit(2);
     }
+    if args
+        .mcp
+        .as_deref()
+        .is_some_and(|token| token.trim().is_empty())
+    {
+        eprintln!("error: --mcp (or ZHORTEN_MCP) must not be empty when provided");
+        std::process::exit(2);
+    }
 
     // Setup our application state with the database and authentication backend.
     let database =
@@ -73,7 +87,13 @@ async fn main() {
     let backend = auth::Backend::new(args.username, args.password);
     let state = AppState { database };
     // Compose the static site, public redirects, authentication endpoints, and protected API.
-    let app = router(args.site_root, state, backend, args.secure_cookies);
+    let app = router(
+        args.site_root,
+        state,
+        backend,
+        args.secure_cookies,
+        args.mcp,
+    );
 
     // Start the server and listen for requests.
     tracing::info!("zhorten listening on http://{}", args.address);
@@ -92,6 +112,7 @@ fn router(
     state: AppState,
     backend: auth::Backend,
     secure_cookies: bool,
+    mcp_token: Option<String>,
 ) -> Router {
     let index = site_root.join("index.html");
     // The session store is intentionally in-memory: restarting the service logs
@@ -112,7 +133,7 @@ fn router(
         .route_layer(login_required!(auth::Backend));
 
     // Compose the public routes and the protected API.
-    Router::new()
+    let mut router = Router::new()
         .route_service("/", ServeFile::new(index.clone()))
         .route_service("/admin", ServeFile::new(index))
         .nest_service("/assets", ServeDir::new(site_root.join("assets")))
@@ -128,7 +149,20 @@ fn router(
         .layer(axum::middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
         .layer(auth_layer)
-        .with_state(state)
+        .with_state(state.clone());
+
+    if let Some(token) = mcp_token {
+        tracing::info!("MCP endpoint enabled at /mcp");
+        let mcp_router = Router::new()
+            .nest_service("/mcp", mcp::service(state.database))
+            .layer(middleware::from_fn_with_state(
+                BearerToken(token),
+                mcp::bearer_auth,
+            ));
+        router = router.merge(mcp_router);
+    }
+
+    router
 }
 
 /// Probe the configured listener for container health checks.

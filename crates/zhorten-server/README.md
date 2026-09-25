@@ -9,6 +9,7 @@
 - Expose redirect routes at `/z/{code}` and `/{code}`.
 - Expose JSON API routes for login, logout, listing links, creating links, and deleting links.
 - Protect administration API routes with `axum-login` sessions.
+- Optionally expose authenticated MCP tools at `/mcp` when started with `--mcp TOKEN`.
 - Implement `zhorten_service::Database` using an embedded sled database.
 - Translate service errors into HTTP responses and JSON `ApiError` payloads.
 
@@ -28,6 +29,7 @@ No link validation or business policy should be reimplemented in handlers. The s
 
 - `src/main.rs` parses configuration, opens storage, configures authentication, builds the router, and starts Axum.
 - `src/handlers.rs` binds Axum extractors and responses to `zhorten-service`.
+- `src/mcp.rs` exposes authenticated MCP tools for listing, generating, creating, and deleting short links.
 - `src/db.rs` implements the service `Database` trait with sled.
 - `src/auth.rs` defines the single configured administrator login backend.
 - `src/helpers.rs` contains small server-side utilities.

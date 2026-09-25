@@ -108,9 +108,26 @@ The command-line options are also available through environment variables:
 | `--cache-capacity` | `ZHORTEN_CACHE_CAPACITY` | `67108864` (64 MiB) |
 | `--address` | `ZHORTEN_ADDR` | `127.0.0.1:3000` |
 | `--site-root` | `ZHORTEN_SITE_ROOT` | `./target/site` |
+| `--mcp` | `ZHORTEN_MCP` | Disabled |
 | `--secure-cookies` | `ZHORTEN_SECURE_COOKIES` | `false` |
 
 The password is supplied at startup, converted to an Argon2 hash, and never written to the database. Authentication is managed by `axum-login` with a `tower-sessions` in-memory store. Sessions end when their one-day cookie expires or the service restarts.
+
+## MCP
+
+The MCP endpoint is disabled unless a bearer token is provided at startup:
+
+```bash
+./target/release/zhorten --mcp 'choose-a-long-random-token'
+```
+
+When enabled, MCP is available at `/mcp` and every request must include:
+
+```text
+Authorization: Bearer choose-a-long-random-token
+```
+
+The MCP server exposes tools for listing links, suggesting route-safe short codes, creating one link, bulk creating links, deleting one link, and bulk deleting links. Bulk create reports per-link successes and validation failures; bulk delete treats missing links as successful no-ops, matching the JSON API.
 
 ## Run with Docker
 
