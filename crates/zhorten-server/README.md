@@ -9,7 +9,7 @@
 - Expose redirect routes at `/z/{code}` and `/{code}`.
 - Expose JSON API routes for login, logout, listing links, creating links, and deleting links.
 - Protect administration API routes with `axum-login` sessions.
-- Optionally expose authenticated MCP tools at `/mcp` when started with `--mcp TOKEN`.
+- Optionally expose authenticated MCP tools at `/mcp` when started with `--mcp TOKEN`; public deployments allow their hostnames with `--mcp-host HOST`.
 - Implement `zhorten_service::Database` using an embedded sled database.
 - Translate service errors into HTTP responses and JSON `ApiError` payloads.
 

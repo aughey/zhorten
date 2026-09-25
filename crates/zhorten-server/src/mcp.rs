@@ -204,15 +204,24 @@ impl ServerHandler for ZHortenMcp {
     }
 }
 
-pub fn service(database: Database) -> StreamableHttpService<ZHortenMcp, LocalSessionManager> {
+pub fn service(
+    database: Database,
+    allowed_hosts: Vec<String>,
+) -> StreamableHttpService<ZHortenMcp, LocalSessionManager> {
     StreamableHttpService::new(
         move || Ok(ZHortenMcp::new(database.clone())),
         Default::default(),
-        StreamableHttpServerConfig::default()
-            .with_legacy_session_mode(false)
-            .with_json_response(true)
-            .with_sse_keep_alive(None),
+        server_config(allowed_hosts),
     )
+}
+
+fn server_config(allowed_hosts: Vec<String>) -> StreamableHttpServerConfig {
+    let mut config = StreamableHttpServerConfig::default()
+        .with_legacy_session_mode(false)
+        .with_json_response(true)
+        .with_sse_keep_alive(None);
+    config.allowed_hosts.extend(allowed_hosts);
+    config
 }
 
 pub async fn bearer_auth(
@@ -347,5 +356,20 @@ impl From<LinkRecord> for McpLinkRecord {
             created_at: record.created_at,
             last_clicked_at: record.last_clicked_at,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::server_config;
+
+    #[test]
+    fn public_mcp_hosts_extend_loopback_defaults() {
+        let config = server_config(vec!["z.washucsc.org".into()]);
+
+        assert!(config.allowed_hosts.contains(&"localhost".into()));
+        assert!(config.allowed_hosts.contains(&"127.0.0.1".into()));
+        assert!(config.allowed_hosts.contains(&"::1".into()));
+        assert!(config.allowed_hosts.contains(&"z.washucsc.org".into()));
     }
 }

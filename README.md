@@ -109,6 +109,7 @@ The command-line options are also available through environment variables:
 | `--address` | `ZHORTEN_ADDR` | `127.0.0.1:3000` |
 | `--site-root` | `ZHORTEN_SITE_ROOT` | `./target/site` |
 | `--mcp` | `ZHORTEN_MCP` | Disabled |
+| `--mcp-host` | `ZHORTEN_MCP_HOST` | Loopback hosts only |
 | `--secure-cookies` | `ZHORTEN_SECURE_COOKIES` | `false` |
 
 The password is supplied at startup, converted to an Argon2 hash, and never written to the database. Authentication is managed by `axum-login` with a `tower-sessions` in-memory store. Sessions end when their one-day cookie expires or the service restarts.
@@ -119,6 +120,14 @@ The MCP endpoint is disabled unless a bearer token is provided at startup:
 
 ```bash
 ./target/release/zhorten --mcp 'choose-a-long-random-token'
+```
+
+For a public deployment, allow each hostname that terminates or proxies MCP requests. The option may be repeated; `ZHORTEN_MCP_HOST` accepts a comma-separated list.
+
+```bash
+./target/release/zhorten \
+  --mcp 'choose-a-long-random-token' \
+  --mcp-host z.washucsc.org
 ```
 
 When enabled, MCP is available at `/mcp` and every request must include:

@@ -46,6 +46,14 @@ struct Args {
     /// Enable the MCP endpoint at /mcp using this bearer token.
     #[arg(long, env = "ZHORTEN_MCP", hide_env_values = true)]
     mcp: Option<String>,
+    /// Allow this hostname to access the MCP endpoint. May be repeated.
+    #[arg(
+        long,
+        env = "ZHORTEN_MCP_HOST",
+        value_delimiter = ',',
+        requires = "mcp"
+    )]
+    mcp_host: Vec<String>,
     /// Add the Secure attribute to session cookies.
     ///
     /// Enable this when zhorten is served through HTTPS. Leave it disabled for
@@ -93,6 +101,7 @@ async fn main() {
         backend,
         args.secure_cookies,
         args.mcp,
+        args.mcp_host,
     );
 
     // Start the server and listen for requests.
@@ -113,6 +122,7 @@ fn router(
     backend: auth::Backend,
     secure_cookies: bool,
     mcp_token: Option<String>,
+    mcp_hosts: Vec<String>,
 ) -> Router {
     let index = site_root.join("index.html");
     // The session store is intentionally in-memory: restarting the service logs
@@ -154,7 +164,7 @@ fn router(
     if let Some(token) = mcp_token {
         tracing::info!("MCP endpoint enabled at /mcp");
         let mcp_router = Router::new()
-            .nest_service("/mcp", mcp::service(state.database))
+            .nest_service("/mcp", mcp::service(state.database, mcp_hosts))
             .layer(middleware::from_fn_with_state(
                 BearerToken(token),
                 mcp::bearer_auth,
