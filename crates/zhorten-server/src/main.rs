@@ -1,8 +1,8 @@
 mod auth;
-mod db;
 mod handlers;
 mod helpers;
 mod mcp;
+mod sled_db;
 
 use axum::{
     Router,
@@ -13,9 +13,9 @@ use axum::{
 };
 use axum_login::{AuthManagerLayerBuilder, login_required};
 use clap::Parser;
-use db::Database;
 use handlers::{AppState, create_link, follow_link, list_links, login, logout, remove_link};
 use mcp::BearerToken;
+use sled_db::Database;
 use std::{
     io::{Read, Write},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream},
@@ -151,11 +151,11 @@ fn router(
         .route("/{code}", get(follow_link))
         .route("/api/login", post(login))
         .route("/api/logout", post(logout))
-        .merge(protected_api)
         .route(
             "/favicon.ico",
             get(|| async { Redirect::permanent("/assets/favicon.svg") }),
         )
+        .merge(protected_api)
         .layer(axum::middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
         .layer(auth_layer)

@@ -4,8 +4,8 @@
 
 use crate::{
     auth::{AuthSession, Credentials},
-    db::Database,
     helpers::now,
+    sled_db::Database,
 };
 use axum::{
     Json,

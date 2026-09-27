@@ -57,11 +57,11 @@ pub fn list_links<D: Database>(database: &D) -> Result<DashboardData, D::Error> 
 pub async fn create_link<D: Database>(
     database: &D,
     code: String,
-    url: String,
+    url: impl AsRef<str>,
     created_at: i64,
 ) -> Result<LinkRecord, CreateLinkError<D::Error>> {
     let code = ValidCode::try_from(code).map_err(|_| CreateLinkError::InvalidCode)?;
-    let url = Url::parse(&url).map_err(|_| CreateLinkError::InvalidUrl)?;
+    let url = Url::parse(url.as_ref()).map_err(|_| CreateLinkError::InvalidUrl)?;
     if !matches!(url.scheme(), "http" | "https") {
         return Err(CreateLinkError::UnsupportedUrlScheme);
     }

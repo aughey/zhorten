@@ -75,34 +75,22 @@ async fn create_link_validates_inputs_before_inserting() {
     let database = FakeDatabase::default();
 
     assert!(matches!(
-        create_link(
-            &database,
-            "bad/code".into(),
-            "https://example.com/".into(),
-            100
-        )
-        .await,
+        create_link(&database, "bad/code".into(), "https://example.com/", 100).await,
         Err(CreateLinkError::InvalidCode)
     ));
     assert!(matches!(
-        create_link(&database, "docs".into(), "not a url".into(), 100).await,
+        create_link(&database, "docs".into(), "not a url", 100).await,
         Err(CreateLinkError::InvalidUrl)
     ));
     assert!(matches!(
-        create_link(&database, "docs".into(), "ftp://example.com/".into(), 100).await,
+        create_link(&database, "docs".into(), "ftp://example.com/", 100).await,
         Err(CreateLinkError::UnsupportedUrlScheme)
     ));
 
-    let record = create_link(&database, "docs".into(), "https://example.com/".into(), 100).await;
+    let record = create_link(&database, "docs".into(), "https://example.com/", 100).await;
     assert_eq!(record.unwrap().url, "https://example.com/");
     assert!(matches!(
-        create_link(
-            &database,
-            "docs".into(),
-            "https://other.example/".into(),
-            100
-        )
-        .await,
+        create_link(&database, "docs".into(), "https://other.example/", 100).await,
         Err(CreateLinkError::Conflict)
     ));
 }
@@ -110,7 +98,7 @@ async fn create_link_validates_inputs_before_inserting() {
 #[tokio::test]
 async fn remove_link_validates_code_and_delegates_to_database() {
     let database = FakeDatabase::default();
-    create_link(&database, "docs".into(), "https://example.com/".into(), 100)
+    create_link(&database, "docs".into(), "https://example.com/", 100)
         .await
         .unwrap();
 
@@ -125,7 +113,7 @@ async fn remove_link_validates_code_and_delegates_to_database() {
 #[tokio::test]
 async fn follow_link_validates_code_and_reports_missing_links() {
     let database = FakeDatabase::default();
-    create_link(&database, "docs".into(), "https://example.com/".into(), 100)
+    create_link(&database, "docs".into(), "https://example.com/", 100)
         .await
         .unwrap();
 
