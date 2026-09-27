@@ -193,6 +193,44 @@ docker run -d \
   ghcr.io/aughey/zhorten:latest
 ```
 
+## Redirect Benchmark
+
+The server crate includes a focused benchmark for public redirect throughput on
+the sled-backed Axum server. It starts the real router on a local TCP listener,
+seeds one short link, and repeatedly requests `GET /bench` over HTTP/1.1
+keep-alive connections.
+
+```bash
+cargo bench --package zhorten-server --bench redirect_throughput
+```
+
+The benchmark can be tuned with:
+
+| Environment variable | Default | Meaning |
+| --- | --- | --- |
+| `ZHORTEN_REDIRECT_BENCH_SECONDS` | `10` | Measurement duration |
+| `ZHORTEN_REDIRECT_BENCH_CONCURRENCY` | `64` | Concurrent keep-alive client connections |
+| `ZHORTEN_REDIRECT_BENCH_CACHE_CAPACITY` | `67108864` | sled cache capacity in bytes |
+
+One local short run on this branch:
+
+```text
+ZHORTEN_REDIRECT_BENCH_SECONDS=2 ZHORTEN_REDIRECT_BENCH_CONCURRENCY=16 cargo bench --package zhorten-server --bench redirect_throughput
+
+redirect benchmark
+  route: /bench
+  storage: sled
+  server: axum over TCP keep-alive
+  concurrency: 16
+  duration: 2.000s
+  requests: 72351
+  throughput: 36166.71 req/s
+```
+
+Treat the number as local-machine throughput, not a platform guarantee. It is
+useful for comparing changes to the redirect path and for showing that the
+deployed shape is one Axum process serving many redirects concurrently.
+
 ## Experimental Container Hosting
 
 Two scale-to-zero container deployment experiments live under `deploy`:
