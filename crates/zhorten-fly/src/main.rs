@@ -5,24 +5,22 @@ use zhorten_server::{
 };
 
 #[derive(Parser)]
-#[command(version, about = "A tiny self-hosted URL shortener")]
+#[command(version, about = "Fly.io deployment wrapper for zhorten")]
 struct Args {
     #[arg(long, env = "ZHORTEN_USERNAME", default_value = "admin")]
     username: String,
     #[arg(long, env = "ZHORTEN_PASSWORD", hide_env_values = true)]
     password: String,
-    #[arg(long, env = "ZHORTEN_DB", default_value = "./data/zhorten.db")]
+    #[arg(long, env = "ZHORTEN_DB", default_value = "/data/zhorten.db")]
     database: String,
     #[arg(long, env = "ZHORTEN_CACHE_CAPACITY", default_value_t = 64 * 1024 * 1024)]
     cache_capacity: u64,
-    #[arg(long, env = "ZHORTEN_ADDR", default_value = "127.0.0.1:3000")]
+    #[arg(long, env = "ZHORTEN_ADDR", default_value = "0.0.0.0:3000")]
     address: SocketAddr,
-    #[arg(long, env = "ZHORTEN_SITE_ROOT", default_value = "./target/site")]
+    #[arg(long, env = "ZHORTEN_SITE_ROOT", default_value = "/app/site")]
     site_root: PathBuf,
-    /// Enable the MCP endpoint at /mcp using this bearer token.
     #[arg(long, env = "ZHORTEN_MCP", hide_env_values = true)]
     mcp: Option<String>,
-    /// Allow this hostname to access the MCP endpoint. May be repeated.
     #[arg(
         long,
         env = "ZHORTEN_MCP_HOST",
@@ -30,11 +28,7 @@ struct Args {
         requires = "mcp"
     )]
     mcp_host: Vec<String>,
-    /// Add the Secure attribute to session cookies.
-    ///
-    /// Enable this when zhorten is served through HTTPS. Leave it disabled for
-    /// plain HTTP local development, where browsers will reject Secure cookies.
-    #[arg(long, env = "ZHORTEN_SECURE_COOKIES", default_value_t = false)]
+    #[arg(long, env = "ZHORTEN_SECURE_COOKIES", default_value_t = true)]
     secure_cookies: bool,
     #[arg(long, hide = true)]
     healthcheck: bool,
@@ -50,7 +44,10 @@ async fn main() {
     if args.healthcheck {
         std::process::exit(if healthy(args.address) { 0 } else { 1 });
     }
-    validate_secrets(&args);
+    if args.password.trim().is_empty() {
+        eprintln!("error: --password (or ZHORTEN_PASSWORD) must not be empty");
+        std::process::exit(2);
+    }
 
     let database =
         Database::open(&args.database, args.cache_capacity).expect("unable to open sled database");
@@ -69,19 +66,4 @@ async fn main() {
     );
 
     serve(args.address, app).await.expect("server error");
-}
-
-fn validate_secrets(args: &Args) {
-    if args.password.trim().is_empty() {
-        eprintln!("error: --password (or ZHORTEN_PASSWORD) must not be empty");
-        std::process::exit(2);
-    }
-    if args
-        .mcp
-        .as_deref()
-        .is_some_and(|token| token.trim().is_empty())
-    {
-        eprintln!("error: --mcp (or ZHORTEN_MCP) must not be empty when provided");
-        std::process::exit(2);
-    }
 }

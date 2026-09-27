@@ -24,17 +24,20 @@ The production instance runs comfortably on AWS's smallest 64-bit Arm EC2 instan
 - [`crates/zhorten-core`](crates/zhorten-core/README.md) contains shared datatypes and API shapes used across the workspace.
 - [`crates/zhorten-service`](crates/zhorten-service/README.md) contains the transport-agnostic functional API and its validation rules.
 - [`crates/zhorten-server`](crates/zhorten-server/README.md) is the Axum API, redirect, authentication, sled storage, and static-file server.
+- [`crates/zhorten-fly`](crates/zhorten-fly) is a Fly.io wrapper around the sled-backed server with Fly-friendly defaults.
+- [`crates/zhorten-google`](crates/zhorten-google) is a Cloud Run wrapper that stores links in Firestore.
 - `public` contains the HTML shell and source assets copied into the browser bundle.
 
 The browser and server are separate build artifacts. A normal Cargo build does not run `wasm-bindgen` or assemble the static site directory.
 
 ## Architecture
 
-zhorten is organized as four crates with narrow boundaries:
+zhorten is organized as a small workspace with narrow boundaries:
 
 - `zhorten-core` is the shared contract crate. It defines route-safe short-link codes plus the JSON request and response types used by both sides of the application.
 - `zhorten-service` is the application service layer. It exposes plain Rust functions for listing, creating, deleting, and following links. It is transport-agnostic and talks to persistence only through its `Database` trait. Most of its work is delegation, with functional validation for short codes and destination URLs where needed.
 - `zhorten-server` is an Axum adapter around the service layer. It owns HTTP routing, request extraction, response/status-code mapping, sessions, security headers, static-file serving, command-line configuration, and the sled implementation of the service database trait. It should not contain app logic.
+- `zhorten-fly` and `zhorten-google` are deployment-specific binaries. They choose platform defaults and storage adapters, then start the shared server.
 - `zhorten-app` is the Leptos browser UI. It is client-side rendered, compiled to WebAssembly with the `csr` feature, and calls the server's same-origin JSON API using the shared shapes from `zhorten-core`.
 
 The dependency direction is intentionally simple:
@@ -43,6 +46,7 @@ The dependency direction is intentionally simple:
 zhorten-app    -> zhorten-core
 zhorten-service -> zhorten-core
 zhorten-server -> zhorten-service -> zhorten-core
+deploy binaries -> zhorten-server and storage-specific dependencies
 ```
 
 The server and app meet at the HTTP/API boundary. The server serves the static CSR bundle, but it does not render the UI, and the app does not know about sled, Axum, sessions, or deployment details.
@@ -188,6 +192,15 @@ docker run -d \
   -v "$PWD/zhorten-data:/data" \
   ghcr.io/aughey/zhorten:latest
 ```
+
+## Experimental Container Hosting
+
+Two scale-to-zero container deployment experiments live under `deploy`:
+
+- [`deploy/fly`](deploy/fly/README.md) runs the existing sled-backed server on one Fly Machine with a persistent volume mounted at `/data`.
+- [`deploy/google`](deploy/google/README.md) builds the `zhorten-google` binary for Cloud Run and uses Firestore for durable storage.
+
+These are side-by-side experiments, not replacements for the EC2 baseline. The Fly deployment should stay single-machine while using sled. The Cloud Run deployment defaults to minimum instances `0`, maximum instances `1`, and concurrency `80` to demonstrate one tiny async server handling many requests.
 
 ## AWS EC2 Setup
 

@@ -5,7 +5,6 @@
 use crate::{
     auth::{AuthSession, Credentials},
     helpers::now,
-    sled_db::Database,
 };
 use axum::{
     Json,
@@ -14,22 +13,25 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
 };
 use zhorten_core::api::{ApiError, CreateRequest, DashboardData, LinkRecord};
-use zhorten_service::{CreateLinkError, FollowLinkError, RemoveLinkError};
+use zhorten_service::{CreateLinkError, Database, FollowLinkError, RemoveLinkError};
 
 #[derive(Clone)]
-pub struct AppState {
-    pub database: Database,
+pub struct AppState<D> {
+    pub database: D,
 }
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 type HandlerResult = Result<Response, (StatusCode, Json<ApiError>)>;
 
 /// Authenticate the configured admin user and return the first dashboard payload.
-pub async fn login(
+pub async fn login<D>(
     mut auth_session: AuthSession,
-    State(state): State<AppState>,
+    State(state): State<AppState<D>>,
     Json(credentials): Json<Credentials>,
-) -> HandlerResult {
+) -> HandlerResult
+where
+    D: Database,
+{
     let Some(user) = auth_session
         .authenticate(credentials)
         .await
@@ -38,7 +40,9 @@ pub async fn login(
         return unauthorized::<DashboardData>().map(IntoResponse::into_response);
     };
     auth_session.login(&user).await.map_err(internal_error)?;
-    let data = zhorten_service::list_links(&state.database).map_err(internal_error)?;
+    let data = zhorten_service::list_links(&state.database)
+        .await
+        .map_err(internal_error)?;
     Ok(Json(data).into_response())
 }
 
@@ -49,17 +53,24 @@ pub async fn logout(mut auth_session: AuthSession) -> HandlerResult {
 }
 
 /// Return the current dashboard state for an authenticated administrator.
-pub async fn list_links(State(state): State<AppState>) -> ApiResult<DashboardData> {
+pub async fn list_links<D>(State(state): State<AppState<D>>) -> ApiResult<DashboardData>
+where
+    D: Database,
+{
     zhorten_service::list_links(&state.database)
+        .await
         .map(Json)
         .map_err(internal_error)
 }
 
 /// Create a short link after validating both the route code and destination URL.
-pub async fn create_link(
-    State(state): State<AppState>,
+pub async fn create_link<D>(
+    State(state): State<AppState<D>>,
     Json(body): Json<CreateRequest>,
-) -> ApiResult<LinkRecord> {
+) -> ApiResult<LinkRecord>
+where
+    D: Database,
+{
     zhorten_service::create_link(&state.database, body.code, body.url, now())
         .await
         .map(Json)
@@ -67,10 +78,13 @@ pub async fn create_link(
 }
 
 /// Remove an existing link. Missing links are treated as a successful no-op.
-pub async fn remove_link(
-    State(state): State<AppState>,
+pub async fn remove_link<D>(
+    State(state): State<AppState<D>>,
     Path(code): Path<String>,
-) -> ApiResult<serde_json::Value> {
+) -> ApiResult<serde_json::Value>
+where
+    D: Database,
+{
     zhorten_service::remove_link(&state.database, code)
         .await
         .map(|_| Json(serde_json::json!({"ok": true})))
@@ -78,7 +92,10 @@ pub async fn remove_link(
 }
 
 /// Resolve a public short code and redirect to its stored destination.
-pub async fn follow_link(State(state): State<AppState>, Path(code): Path<String>) -> Response {
+pub async fn follow_link<D>(State(state): State<AppState<D>>, Path(code): Path<String>) -> Response
+where
+    D: Database,
+{
     match zhorten_service::follow_link(&state.database, code, now()).await {
         Ok(url) => Redirect::temporary(&url).into_response(),
         Err(FollowLinkError::InvalidCode | FollowLinkError::NotFound) => not_found(),

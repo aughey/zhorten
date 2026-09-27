@@ -25,3 +25,10 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url = "2.5.8"
 zhorten-core.workspace = true
 zhorten-service.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1.53.1", features = ["io-util", "net", "rt-multi-thread", "time"] }
+
+[[bench]]
+name = "redirect_throughput"
+harness = false

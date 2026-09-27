@@ -119,8 +119,10 @@ impl ZHortenMcp {
 #[tool_router]
 impl ZHortenMcp {
     #[tool(description = "List all short links and aggregate click counts.")]
-    fn list_links(&self) -> Result<Json<ListLinksOutput>, ErrorData> {
-        let data = zhorten_service::list_links(&self.database).map_err(database_error)?;
+    async fn list_links(&self) -> Result<Json<ListLinksOutput>, ErrorData> {
+        let data = zhorten_service::list_links(&self.database)
+            .await
+            .map_err(database_error)?;
         Ok(Json(ListLinksOutput {
             links: data.links.into_iter().map(Into::into).collect(),
             total_clicks: data.total_clicks,

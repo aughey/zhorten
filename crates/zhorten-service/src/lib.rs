@@ -9,7 +9,7 @@ use zhorten_core::{
 pub trait Database {
     type Error: fmt::Display;
 
-    fn dashboard(&self) -> Result<DashboardData, Self::Error>;
+    fn dashboard(&self) -> impl Future<Output = Result<DashboardData, Self::Error>> + Send;
 
     fn create_link(
         &self,
@@ -50,8 +50,8 @@ pub enum FollowLinkError<E> {
     Database(E),
 }
 
-pub fn list_links<D: Database>(database: &D) -> Result<DashboardData, D::Error> {
-    database.dashboard()
+pub async fn list_links<D: Database>(database: &D) -> Result<DashboardData, D::Error> {
+    database.dashboard().await
 }
 
 pub async fn create_link<D: Database>(

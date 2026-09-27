@@ -10,7 +10,7 @@ struct FakeDatabase {
 impl Database for FakeDatabase {
     type Error = Infallible;
 
-    fn dashboard(&self) -> Result<DashboardData, Self::Error> {
+    async fn dashboard(&self) -> Result<DashboardData, Self::Error> {
         let links = self.links.lock().unwrap().clone();
         let total_clicks = links.iter().map(|record| record.clicks).sum();
         Ok(DashboardData {
@@ -107,7 +107,7 @@ async fn remove_link_validates_code_and_delegates_to_database() {
         Err(RemoveLinkError::InvalidCode)
     );
     remove_link(&database, "docs".into()).await.unwrap();
-    assert!(list_links(&database).unwrap().links.is_empty());
+    assert!(list_links(&database).await.unwrap().links.is_empty());
 }
 
 #[tokio::test]

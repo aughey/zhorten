@@ -33,7 +33,7 @@ async fn link_lifecycle_updates_dashboard_and_clicks() {
         Some(record.url.clone())
     );
 
-    let dashboard = database.dashboard().unwrap();
+    let dashboard = database.dashboard().await.unwrap();
     assert_eq!(dashboard.total_clicks, 1);
     assert_eq!(dashboard.links[0].last_clicked_at, Some(200));
 

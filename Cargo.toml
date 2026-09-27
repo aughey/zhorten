@@ -2,6 +2,8 @@
 members = [
   "crates/zhorten-app",
   "crates/zhorten-core",
+  "crates/zhorten-fly",
+  "crates/zhorten-google",
   "crates/zhorten-service",
   "crates/zhorten-server",
 ]

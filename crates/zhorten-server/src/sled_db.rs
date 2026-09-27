@@ -42,7 +42,7 @@ impl zhorten_service::Database for Database {
     ///
     /// Corrupt records are skipped so one bad value does not make the whole
     /// administration page unusable.
-    fn dashboard(&self) -> Result<DashboardData, Self::Error> {
+    async fn dashboard(&self) -> Result<DashboardData, Self::Error> {
         let mut links: Vec<LinkRecord> = self
             .links
             .iter()
