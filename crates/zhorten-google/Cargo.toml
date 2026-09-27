@@ -1,0 +1,20 @@
+[package]
+name = "zhorten-google"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "zhorten-google"
+path = "src/main.rs"
+
+[dependencies]
+async-trait.workspace = true
+firestore = { version = "0.57.1", default-features = false, features = ["tls-webpki-roots"] }
+futures = "0.3.34"
+serde.workspace = true
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+url = "2.5.8"
+zhorten-core = { workspace = true, features = ["cli"] }
+zhorten-server = { path = "../zhorten-server" }
+zhorten-service.workspace = true

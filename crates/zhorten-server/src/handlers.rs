@@ -5,31 +5,34 @@
 use crate::{
     auth::{AuthSession, Credentials},
     helpers::now,
-    sled_db::Database,
 };
 use axum::{
     Json,
-    extract::{Path, State},
-    http::StatusCode,
+    extract::{ConnectInfo, Path, State},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
 };
+use std::net::SocketAddr;
 use zhorten_core::api::{ApiError, CreateRequest, DashboardData, LinkRecord};
-use zhorten_service::{CreateLinkError, FollowLinkError, RemoveLinkError};
+use zhorten_service::{ClickContext, CreateLinkError, Database, FollowLinkError, RemoveLinkError};
 
 #[derive(Clone)]
-pub struct AppState {
-    pub database: Database,
+pub struct AppState<D> {
+    pub database: D,
 }
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiError>)>;
 type HandlerResult = Result<Response, (StatusCode, Json<ApiError>)>;
 
 /// Authenticate the configured admin user and return the first dashboard payload.
-pub async fn login(
+pub async fn login<D>(
     mut auth_session: AuthSession,
-    State(state): State<AppState>,
+    State(state): State<AppState<D>>,
     Json(credentials): Json<Credentials>,
-) -> HandlerResult {
+) -> HandlerResult
+where
+    D: Database,
+{
     let Some(user) = auth_session
         .authenticate(credentials)
         .await
@@ -38,7 +41,9 @@ pub async fn login(
         return unauthorized::<DashboardData>().map(IntoResponse::into_response);
     };
     auth_session.login(&user).await.map_err(internal_error)?;
-    let data = zhorten_service::list_links(&state.database).map_err(internal_error)?;
+    let data = zhorten_service::list_links(&state.database)
+        .await
+        .map_err(internal_error)?;
     Ok(Json(data).into_response())
 }
 
@@ -49,17 +54,24 @@ pub async fn logout(mut auth_session: AuthSession) -> HandlerResult {
 }
 
 /// Return the current dashboard state for an authenticated administrator.
-pub async fn list_links(State(state): State<AppState>) -> ApiResult<DashboardData> {
+pub async fn list_links<D>(State(state): State<AppState<D>>) -> ApiResult<DashboardData>
+where
+    D: Database,
+{
     zhorten_service::list_links(&state.database)
+        .await
         .map(Json)
         .map_err(internal_error)
 }
 
 /// Create a short link after validating both the route code and destination URL.
-pub async fn create_link(
-    State(state): State<AppState>,
+pub async fn create_link<D>(
+    State(state): State<AppState<D>>,
     Json(body): Json<CreateRequest>,
-) -> ApiResult<LinkRecord> {
+) -> ApiResult<LinkRecord>
+where
+    D: Database,
+{
     zhorten_service::create_link(&state.database, body.code, body.url, now())
         .await
         .map(Json)
@@ -67,10 +79,13 @@ pub async fn create_link(
 }
 
 /// Remove an existing link. Missing links are treated as a successful no-op.
-pub async fn remove_link(
-    State(state): State<AppState>,
+pub async fn remove_link<D>(
+    State(state): State<AppState<D>>,
     Path(code): Path<String>,
-) -> ApiResult<serde_json::Value> {
+) -> ApiResult<serde_json::Value>
+where
+    D: Database,
+{
     zhorten_service::remove_link(&state.database, code)
         .await
         .map(|_| Json(serde_json::json!({"ok": true})))
@@ -78,8 +93,17 @@ pub async fn remove_link(
 }
 
 /// Resolve a public short code and redirect to its stored destination.
-pub async fn follow_link(State(state): State<AppState>, Path(code): Path<String>) -> Response {
-    match zhorten_service::follow_link(&state.database, code, now()).await {
+pub async fn follow_link<D>(
+    State(state): State<AppState<D>>,
+    Path(code): Path<String>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response
+where
+    D: Database,
+{
+    let context = click_context(&headers, remote_addr);
+    match zhorten_service::follow_link(&state.database, code, context).await {
         Ok(url) => Redirect::temporary(&url).into_response(),
         Err(FollowLinkError::InvalidCode | FollowLinkError::NotFound) => not_found(),
         Err(FollowLinkError::Database(error)) => {
@@ -87,6 +111,27 @@ pub async fn follow_link(State(state): State<AppState>, Path(code): Path<String>
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+fn click_context(headers: &HeaderMap, remote_addr: SocketAddr) -> ClickContext {
+    ClickContext {
+        clicked_at: now(),
+        client_ip: forwarded_for(headers).or_else(|| Some(remote_addr.ip().to_string())),
+        user_agent: headers
+            .get(header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
+    }
+}
+
+fn forwarded_for(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn unauthorized<T>() -> ApiResult<T> {

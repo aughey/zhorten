@@ -1,4 +1,4 @@
-use zhorten_core::cli::{Parser, StandaloneSledArgs, validate_mcp, validate_password};
+use zhorten_core::cli::{FlySledArgs, Parser, validate_mcp, validate_password};
 use zhorten_server::{LocalServerOptions, ServerOptions, healthy, local_router, serve};
 
 #[tokio::main]
@@ -7,7 +7,7 @@ async fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let args = StandaloneSledArgs::parse();
+    let args = FlySledArgs::parse();
     let address = args.server.address;
     if args.server.healthcheck {
         std::process::exit(if healthy(address) { 0 } else { 1 });

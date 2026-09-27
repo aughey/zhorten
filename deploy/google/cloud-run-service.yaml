@@ -1,0 +1,33 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: zhorten
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "1"
+    spec:
+      containerConcurrency: 80
+      serviceAccountName: zhorten-cloud-run
+      containers:
+        - image: us-docker.pkg.dev/PROJECT_ID/zhorten/zhorten-google:latest
+          env:
+            - name: ZHORTEN_USERNAME
+              value: admin
+            - name: ZHORTEN_ADDR
+              value: 0.0.0.0:8080
+            - name: ZHORTEN_SITE_ROOT
+              value: /app/site
+            - name: ZHORTEN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zhorten-password
+                  key: latest
+            - name: ZHORTEN_GOOGLE_PROJECT
+              value: PROJECT_ID
+            - name: ZHORTEN_FIRESTORE_COLLECTION
+              value: links
+            - name: ZHORTEN_SECURE_COOKIES
+              value: "true"

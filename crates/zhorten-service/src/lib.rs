@@ -1,4 +1,6 @@
-use std::{fmt, future::Future};
+use std::{fmt, sync::Arc};
+
+use async_trait::async_trait;
 use url::Url;
 use zhorten_core::{
     ValidCode,
@@ -6,26 +8,76 @@ use zhorten_core::{
 };
 
 /// This trait defines the interface for the database operations that are used by the application.
-pub trait Database {
-    type Error: fmt::Display;
+#[async_trait]
+pub trait Database: Send + Sync {
+    type Error: fmt::Display + Send + Sync + 'static;
 
-    fn dashboard(&self) -> Result<DashboardData, Self::Error>;
+    async fn dashboard(&self) -> Result<DashboardData, Self::Error>;
 
-    fn create_link(
+    async fn create_link(
         &self,
         code: ValidCode,
         url: Url,
         created_at: i64,
-    ) -> impl Future<Output = Result<Option<LinkRecord>, Self::Error>> + Send;
+    ) -> Result<Option<LinkRecord>, Self::Error>;
 
-    fn remove_link(&self, code: &ValidCode)
-    -> impl Future<Output = Result<(), Self::Error>> + Send;
+    async fn remove_link(&self, code: &ValidCode) -> Result<(), Self::Error>;
 
-    fn follow_link(
+    async fn follow_link(
         &self,
         code: &ValidCode,
-        clicked_at: i64,
-    ) -> impl Future<Output = Result<Option<String>, Self::Error>> + Send;
+        context: ClickContext,
+    ) -> Result<Option<String>, Self::Error>;
+}
+
+#[async_trait]
+impl<D> Database for Arc<D>
+where
+    D: Database + ?Sized,
+{
+    type Error = D::Error;
+
+    async fn dashboard(&self) -> Result<DashboardData, Self::Error> {
+        self.as_ref().dashboard().await
+    }
+
+    async fn create_link(
+        &self,
+        code: ValidCode,
+        url: Url,
+        created_at: i64,
+    ) -> Result<Option<LinkRecord>, Self::Error> {
+        self.as_ref().create_link(code, url, created_at).await
+    }
+
+    async fn remove_link(&self, code: &ValidCode) -> Result<(), Self::Error> {
+        self.as_ref().remove_link(code).await
+    }
+
+    async fn follow_link(
+        &self,
+        code: &ValidCode,
+        context: ClickContext,
+    ) -> Result<Option<String>, Self::Error> {
+        self.as_ref().follow_link(code, context).await
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClickContext {
+    pub clicked_at: i64,
+    pub client_ip: Option<String>,
+    pub user_agent: Option<String>,
+}
+
+impl ClickContext {
+    pub fn new(clicked_at: i64) -> Self {
+        Self {
+            clicked_at,
+            client_ip: None,
+            user_agent: None,
+        }
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -50,11 +102,11 @@ pub enum FollowLinkError<E> {
     Database(E),
 }
 
-pub fn list_links<D: Database>(database: &D) -> Result<DashboardData, D::Error> {
-    database.dashboard()
+pub async fn list_links<D: Database + ?Sized>(database: &D) -> Result<DashboardData, D::Error> {
+    database.dashboard().await
 }
 
-pub async fn create_link<D: Database>(
+pub async fn create_link<D: Database + ?Sized>(
     database: &D,
     code: String,
     url: impl AsRef<str>,
@@ -72,7 +124,7 @@ pub async fn create_link<D: Database>(
         .ok_or(CreateLinkError::Conflict)
 }
 
-pub async fn remove_link<D: Database>(
+pub async fn remove_link<D: Database + ?Sized>(
     database: &D,
     code: String,
 ) -> Result<(), RemoveLinkError<D::Error>> {
@@ -83,14 +135,14 @@ pub async fn remove_link<D: Database>(
         .map_err(RemoveLinkError::Database)
 }
 
-pub async fn follow_link<D: Database>(
+pub async fn follow_link<D: Database + ?Sized>(
     database: &D,
     code: String,
-    clicked_at: i64,
+    context: ClickContext,
 ) -> Result<String, FollowLinkError<D::Error>> {
     let code = ValidCode::try_from(code).map_err(|_| FollowLinkError::InvalidCode)?;
     database
-        .follow_link(&code, clicked_at)
+        .follow_link(&code, context)
         .await
         .map_err(FollowLinkError::Database)?
         .ok_or(FollowLinkError::NotFound)

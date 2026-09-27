@@ -20,20 +20,17 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
       target/front/wasm32-unknown-unknown/release/zhorten_app.wasm \
     && cp public/index.html /output/site/ \
     && cp -R public/assets/. /output/site/assets/ \
-    && cargo build --locked --package zhorten-server --bin zhorten --release \
-    && cp target/release/zhorten /output/zhorten \
-    && mkdir -p /output/data
+    && cargo build --locked --package zhorten-google --bin zhorten-google --release \
+    && cp target/release/zhorten-google /output/zhorten-google
 
 FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 
-COPY --from=builder --chown=10001:10001 /output/zhorten /app/zhorten
+COPY --from=builder --chown=10001:10001 /output/zhorten-google /app/zhorten-google
 COPY --from=builder --chown=10001:10001 /output/site /app/site
-COPY --from=builder --chown=10001:10001 /output/data /data
 
 USER 10001:10001
 WORKDIR /app
-VOLUME ["/data"]
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD ["/app/zhorten", "--healthcheck"]
-ENTRYPOINT ["/app/zhorten"]
+    CMD ["/app/zhorten-google", "--healthcheck"]
+ENTRYPOINT ["/app/zhorten-google"]

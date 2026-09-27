@@ -1,0 +1,15 @@
+[package]
+name = "zhorten-fly"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "zhorten-fly"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+zhorten-core = { workspace = true, features = ["cli"] }
+zhorten-database.workspace = true
+zhorten-server = { path = "../zhorten-server" }

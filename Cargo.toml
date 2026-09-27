@@ -2,8 +2,14 @@
 members = [
   "crates/zhorten-app",
   "crates/zhorten-core",
+  "crates/zhorten-fly",
+  "crates/zhorten-google",
+  "crates/zhorten-cli",
+  "crates/zhorten-database",
   "crates/zhorten-service",
   "crates/zhorten-server",
+  "crates/zhorten-sled",
+  "crates/zhorten-sqlite",
 ]
 resolver = "3"
 
@@ -14,8 +20,12 @@ edition = "2024"
 [workspace.dependencies]
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+async-trait = "0.1.92"
 zhorten-core = { path = "crates/zhorten-core" }
+zhorten-database = { path = "crates/zhorten-database" }
 zhorten-service = { path = "crates/zhorten-service" }
+zhorten-sled = { path = "crates/zhorten-sled" }
+zhorten-sqlite = { path = "crates/zhorten-sqlite" }
 
 [profile.release]
 codegen-units = 1

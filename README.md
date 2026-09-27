@@ -2,7 +2,7 @@
 
 zhorten is a tiny, simple replacement for [YOURLS](https://yourls.org/). It provides short links, click counts, QR codes, and a private administration screen without requiring a separate database or web server.
 
-The application is written in Rust with a client-side rendered Leptos app and a small Axum server. The server exposes only redirect and JSON API routes, serves the static browser bundle, and stores links in an embedded sled database. The goal is a fast, secure deployment with very little memory or operational overhead.
+The application is written in Rust with a client-side rendered Leptos app and a small Axum server. The server exposes only redirect and JSON API routes, serves the static browser bundle, and stores links in an embedded local database. The goal is a fast, secure deployment with very little memory or operational overhead.
 
 The production instance runs comfortably on AWS's smallest 64-bit Arm EC2 instance, a `t4g.nano` with 512 MB of memory, for a few dollars per month.
 
@@ -21,20 +21,30 @@ The production instance runs comfortably on AWS's smallest 64-bit Arm EC2 instan
 ## Project Layout
 
 - [`crates/zhorten-app`](crates/zhorten-app/README.md) is the standalone Leptos CSR application compiled to WebAssembly.
+- [`crates/zhorten-cli`](crates/zhorten-cli) is a command-line binding to the service layer for one-off list/create/follow/delete operations.
 - [`crates/zhorten-core`](crates/zhorten-core/README.md) contains shared datatypes and API shapes used across the workspace.
 - [`crates/zhorten-service`](crates/zhorten-service/README.md) contains the transport-agnostic functional API and its validation rules.
-- [`crates/zhorten-server`](crates/zhorten-server/README.md) is the Axum API, redirect, authentication, sled storage, and static-file server.
+- [`crates/zhorten-database`](crates/zhorten-database) opens the configured local database backend behind the service trait.
+- [`crates/zhorten-sled`](crates/zhorten-sled) is the sled-backed implementation of the service database trait.
+- [`crates/zhorten-sqlite`](crates/zhorten-sqlite) is the SQLite-backed implementation of the service database trait.
+- [`crates/zhorten-server`](crates/zhorten-server/README.md) is the Axum API, redirect, authentication, storage factory, and static-file server.
+- [`crates/zhorten-fly`](crates/zhorten-fly) is a Fly.io wrapper around the local-database server with Fly-friendly defaults.
+- [`crates/zhorten-google`](crates/zhorten-google) is a Cloud Run wrapper that stores links in Firestore.
 - `public` contains the HTML shell and source assets copied into the browser bundle.
 
 The browser and server are separate build artifacts. A normal Cargo build does not run `wasm-bindgen` or assemble the static site directory.
 
 ## Architecture
 
-zhorten is organized as four crates with narrow boundaries:
+zhorten is organized as a small workspace with narrow boundaries:
 
 - `zhorten-core` is the shared contract crate. It defines route-safe short-link codes plus the JSON request and response types used by both sides of the application.
 - `zhorten-service` is the application service layer. It exposes plain Rust functions for listing, creating, deleting, and following links. It is transport-agnostic and talks to persistence only through its `Database` trait. Most of its work is delegation, with functional validation for short codes and destination URLs where needed.
-- `zhorten-server` is an Axum adapter around the service layer. It owns HTTP routing, request extraction, response/status-code mapping, sessions, security headers, static-file serving, command-line configuration, and the sled implementation of the service database trait. It should not contain app logic.
+- `zhorten-sled` and `zhorten-sqlite` are interchangeable local storage adapters used through `zhorten-database`.
+- `zhorten-database` is the local storage factory. It accepts configuration, opens sled or SQLite, and returns a shared database trait object to executable entry points.
+- `zhorten-server` is an Axum adapter around the service layer. It owns HTTP routing, request extraction, response/status-code mapping, sessions, security headers, static-file serving, and command-line configuration. It should not contain app logic.
+- `zhorten-cli` is a command-line adapter around the service layer. It starts no web server; each process performs one requested service operation and exits.
+- `zhorten-fly` and `zhorten-google` are deployment-specific binaries. They choose platform defaults and storage adapters, then start the shared server.
 - `zhorten-app` is the Leptos browser UI. It is client-side rendered, compiled to WebAssembly with the `csr` feature, and calls the server's same-origin JSON API using the shared shapes from `zhorten-core`.
 
 The dependency direction is intentionally simple:
@@ -42,7 +52,11 @@ The dependency direction is intentionally simple:
 ```text
 zhorten-app    -> zhorten-core
 zhorten-service -> zhorten-core
-zhorten-server -> zhorten-service -> zhorten-core
+zhorten-sled / zhorten-sqlite -> zhorten-service -> zhorten-core
+zhorten-database -> local storage adapters -> zhorten-service -> zhorten-core
+zhorten-server -> zhorten-database -> zhorten-service -> zhorten-core
+zhorten-cli -> zhorten-database -> zhorten-service -> zhorten-core
+deploy binaries -> zhorten-server and storage-specific dependencies
 ```
 
 The server and app meet at the HTTP/API boundary. The server serves the static CSR bundle, but it does not render the UI, and the app does not know about sled, Axum, sessions, or deployment details.
@@ -92,27 +106,58 @@ Start the server:
 export ZHORTEN_USERNAME=admin
 export ZHORTEN_PASSWORD='choose-a-long-random-password'
 export ZHORTEN_DB='./data/zhorten.db'
-export ZHORTEN_SITE_ROOT='./target/site'
+export ZHORTEN_ADDR='127.0.0.1:3000'
 ./target/release/zhorten
 ```
 
 Open <http://127.0.0.1:3000/admin>. Rebuild the WASM bundle after changing `zhorten-app`, rebuild the executable after changing `zhorten-server`, and recopy `public` files after changing static assets.
 
-The command-line options are also available through environment variables:
+The command-line options are also available through environment variables. The listener address and database path are intentionally explicit; cache size, site root, and cookie security have deployment-shaped defaults.
 
 | Option | Environment variable | Default |
 | --- | --- | --- |
-| `--username` | `ZHORTEN_USERNAME` | `admin` |
+| `--username` | `ZHORTEN_USERNAME` | Required |
 | `--password` | `ZHORTEN_PASSWORD` | Required |
-| `--database` | `ZHORTEN_DB` | `./data/zhorten.db` |
-| `--cache-capacity` | `ZHORTEN_CACHE_CAPACITY` | `67108864` (64 MiB) |
-| `--address` | `ZHORTEN_ADDR` | `127.0.0.1:3000` |
-| `--site-root` | `ZHORTEN_SITE_ROOT` | `./target/site` |
+| `--database-backend sled|sqlite` | `ZHORTEN_DATABASE_BACKEND` | `sled` |
+| `--database` | `ZHORTEN_DB` | Required |
+| `--analytics disabled|enabled` | `ZHORTEN_ANALYTICS` | `disabled` |
+| `--address` | `ZHORTEN_ADDR` | Required |
+| `--cache-capacity` | `ZHORTEN_CACHE_CAPACITY` | `67108864` (64 MiB, sled only) |
+| `--site-root` | `ZHORTEN_SITE_ROOT` | `./target/site` for `zhorten`, `/app/site` for deployment binaries |
+| `--secure-cookies true|false` | `ZHORTEN_SECURE_COOKIES` | `false` for `zhorten`, `true` for deployment binaries |
 | `--mcp` | `ZHORTEN_MCP` | Disabled |
 | `--mcp-host` | `ZHORTEN_MCP_HOST` | Loopback hosts only |
-| `--secure-cookies` | `ZHORTEN_SECURE_COOKIES` | `false` |
 
 The password is supplied at startup, converted to an Argon2 hash, and never written to the database. Authentication is managed by `axum-login` with a `tower-sessions` in-memory store. Sessions end when their one-day cookie expires or the service restarts.
+
+## Run One-Off CLI Operations
+
+`zhorten-cli` binds the same service layer to a command-line interface without
+starting Axum or serving static files. It is useful for local inspection,
+scripting, and demonstrating the transport-agnostic service boundary.
+
+```bash
+cargo run --package zhorten-cli -- --database ./data/zhorten.db create docs https://example.com/docs
+cargo run --package zhorten-cli -- --database ./data/zhorten.db follow docs
+cargo run --package zhorten-cli -- --database ./data/zhorten.db list
+cargo run --package zhorten-cli -- --database ./data/zhorten.db delete docs
+```
+
+Commands:
+
+- `list` or `dashboard` prints dashboard JSON.
+- `create <code> <url>` validates and creates one short link, then prints the created record as JSON.
+- `follow <code>` resolves the short code, records a click, and prints the destination URL.
+- `delete <code>` or `remove <code>` deletes a short link and treats missing links as a successful no-op.
+
+The CLI accepts the same local storage flags used by the server. The database path is explicit; sled treats it as a database directory, while SQLite treats it as a database file.
+
+| Option | Environment variable | Default |
+| --- | --- | --- |
+| `--database-backend sled|sqlite` | `ZHORTEN_DATABASE_BACKEND` | `sled` |
+| `--database` | `ZHORTEN_DB` | Required |
+| `--analytics disabled|enabled` | `ZHORTEN_ANALYTICS` | `disabled` |
+| `--cache-capacity` | `ZHORTEN_CACHE_CAPACITY` | `67108864` (64 MiB, sled only) |
 
 ## MCP
 
@@ -159,6 +204,11 @@ docker run -d \
   -p 80:3000 \
   -e ZHORTEN_USERNAME=admin \
   -e ZHORTEN_PASSWORD='choose-a-long-random-password' \
+  -e ZHORTEN_ADDR=0.0.0.0:3000 \
+  -e ZHORTEN_DB=/data/zhorten.db \
+  -e ZHORTEN_CACHE_CAPACITY=67108864 \
+  -e ZHORTEN_SITE_ROOT=/app/site \
+  -e ZHORTEN_SECURE_COOKIES=false \
   -v zhorten-data:/data \
   ghcr.io/aughey/zhorten:latest
 ```
@@ -184,10 +234,63 @@ docker run -d \
   --name zhorten \
   --restart unless-stopped \
   -p 80:3000 \
+  -e ZHORTEN_USERNAME=admin \
   -e ZHORTEN_PASSWORD='choose-a-long-random-password' \
+  -e ZHORTEN_ADDR=0.0.0.0:3000 \
+  -e ZHORTEN_DB=/data/zhorten.db \
+  -e ZHORTEN_CACHE_CAPACITY=67108864 \
+  -e ZHORTEN_SITE_ROOT=/app/site \
+  -e ZHORTEN_SECURE_COOKIES=false \
   -v "$PWD/zhorten-data:/data" \
   ghcr.io/aughey/zhorten:latest
 ```
+
+## Redirect Benchmark
+
+The server crate includes a focused benchmark for public redirect throughput on
+the sled-backed Axum server. It starts the real router on a local TCP listener,
+seeds one short link, and repeatedly requests `GET /bench` over HTTP/1.1
+keep-alive connections.
+
+```bash
+cargo bench --package zhorten-server --bench redirect_throughput
+```
+
+The benchmark can be tuned with:
+
+| Environment variable | Default | Meaning |
+| --- | --- | --- |
+| `ZHORTEN_REDIRECT_BENCH_SECONDS` | `10` | Measurement duration |
+| `ZHORTEN_REDIRECT_BENCH_CONCURRENCY` | `64` | Concurrent keep-alive client connections |
+| `ZHORTEN_REDIRECT_BENCH_CACHE_CAPACITY` | `67108864` | sled cache capacity in bytes |
+
+One local short run on this branch:
+
+```text
+ZHORTEN_REDIRECT_BENCH_SECONDS=2 ZHORTEN_REDIRECT_BENCH_CONCURRENCY=16 cargo bench --package zhorten-server --bench redirect_throughput
+
+redirect benchmark
+  route: /bench
+  storage: sled
+  server: axum over TCP keep-alive
+  concurrency: 16
+  duration: 2.000s
+  requests: 72351
+  throughput: 36166.71 req/s
+```
+
+Treat the number as local-machine throughput, not a platform guarantee. It is
+useful for comparing changes to the redirect path and for showing that the
+deployed shape is one Axum process serving many redirects concurrently.
+
+## Experimental Container Hosting
+
+Two scale-to-zero container deployment experiments live under `deploy`:
+
+- [`deploy/fly`](deploy/fly/README.md) runs the existing sled-backed server on one Fly Machine with a persistent volume mounted at `/data`.
+- [`deploy/google`](deploy/google/README.md) builds the `zhorten-google` binary for Cloud Run and uses Firestore for durable storage.
+
+These are side-by-side experiments, not replacements for the EC2 baseline. The Fly deployment should stay single-machine while using sled. The Cloud Run deployment defaults to minimum instances `0`, maximum instances `1`, and concurrency `80` to demonstrate one tiny async server handling many requests.
 
 ## AWS EC2 Setup
 
@@ -221,7 +324,10 @@ umask 077
 cat > /home/ec2-user/zhorten/zhorten.env <<'EOF'
 ZHORTEN_USERNAME=admin
 ZHORTEN_PASSWORD=replace-with-a-long-random-password
+ZHORTEN_ADDR=0.0.0.0:3000
+ZHORTEN_DB=/data/zhorten.db
 ZHORTEN_CACHE_CAPACITY=67108864
+ZHORTEN_SITE_ROOT=/app/site
 ZHORTEN_SECURE_COOKIES=false
 RUST_LOG=info
 EOF
