@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// The code is validated when constructed or deserialized, so persisted and API
 /// records cannot represent an invalid route key.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct LinkRecord {
     pub code: ValidCode,
     pub url: String,
@@ -15,7 +15,7 @@ pub struct LinkRecord {
 }
 
 /// Data returned by the authenticated dashboard endpoint.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct DashboardData {
     pub links: Vec<LinkRecord>,
     pub total_clicks: u64,

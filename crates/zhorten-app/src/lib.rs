@@ -1,6 +1,10 @@
 #![recursion_limit = "512"]
 #![cfg_attr(not(feature = "csr"), allow(dead_code, unused_variables))]
 
+#[cfg(feature = "csr")]
+mod api_helper;
+#[cfg(feature = "csr")]
+use api_helper::{api, api_nobody};
 use leptos::prelude::*;
 use leptos_meta::{Stylesheet, Title, provide_meta_context};
 use leptos_router::{
@@ -8,72 +12,10 @@ use leptos_router::{
     path,
 };
 use qrcode::{QrCode, render::svg};
-use serde::{Deserialize, Serialize};
-use zhorten_core::api::{ApiError, CreateRequest, DashboardData, LinkRecord, LoginRequest};
-
+use zhorten_core::ValidCode;
 #[cfg(feature = "csr")]
-/// Issue a same-origin JSON API request from the browser bundle.
-///
-/// A 401 is normalized to the sentinel string `"unauthorized"` because the UI
-/// uses that response to switch between the login and dashboard screens.
-async fn api<T: for<'de> Deserialize<'de>, B: Serialize>(
-    method: &str,
-    path: &str,
-    body: B,
-) -> Result<T, String> {
-    let json = serde_json::to_string(&body).map_err(|e| e.to_string())?;
-    api_raw(method, path, Some(json)).await
-}
-
-#[cfg(feature = "csr")]
-/// Like [`api`], but for requests that send no body.
-async fn api_nobody<T: for<'de> Deserialize<'de>>(method: &str, path: &str) -> Result<T, String> {
-    api_raw(method, path, None).await
-}
-
-#[cfg(feature = "csr")]
-async fn api_raw<T: for<'de> Deserialize<'de>>(
-    method: &str,
-    path: &str,
-    body: Option<String>,
-) -> Result<T, String> {
-    use wasm_bindgen::JsCast;
-    use wasm_bindgen_futures::JsFuture;
-    use web_sys::{Request, RequestInit, RequestMode, Response};
-
-    let opts = RequestInit::new();
-    opts.set_method(method);
-    opts.set_mode(RequestMode::SameOrigin);
-    if let Some(body) = body {
-        opts.set_body(&wasm_bindgen::JsValue::from_str(&body));
-    }
-    let request = Request::new_with_str_and_init(path, &opts).map_err(|e| format!("{e:?}"))?;
-    request
-        .headers()
-        .set("Content-Type", "application/json")
-        .map_err(|e| format!("{e:?}"))?;
-    let window = web_sys::window().ok_or("browser window unavailable")?;
-    let response = JsFuture::from(window.fetch_with_request(&request))
-        .await
-        .map_err(|e| format!("{e:?}"))?;
-    let response: Response = response.dyn_into().map_err(|_| "invalid response")?;
-    let status = response.status();
-    let text = JsFuture::from(response.text().map_err(|e| format!("{e:?}"))?)
-        .await
-        .map_err(|e| format!("{e:?}"))?
-        .as_string()
-        .unwrap_or_default();
-    if status == 401 {
-        return Err("unauthorized".into());
-    }
-    if !response.ok() {
-        let message = serde_json::from_str::<ApiError>(&text)
-            .map(|e| e.error)
-            .unwrap_or(text);
-        return Err(message);
-    }
-    serde_json::from_str(&text).map_err(|e| e.to_string())
-}
+use zhorten_core::api::LoginRequest;
+use zhorten_core::api::{CreateRequest, DashboardData, LinkRecord};
 
 #[component]
 /// Root Leptos component with the public home page and admin console routes.
@@ -114,12 +56,26 @@ fn NotFound() -> impl IntoView {
     }
 }
 
+#[derive(PartialEq, Eq, Debug)]
+enum AdminState {
+    Loading,
+    Login,
+    Error(String),
+    Dashboard { data: DashboardData },
+}
+
 #[component]
 fn Admin() -> impl IntoView {
-    let (authenticated, set_authenticated) = signal(false);
-    let (loading, set_loading) = signal(true);
-    let (data, set_data) = signal(None::<DashboardData>);
-    let (error, set_error) = signal(None::<String>);
+    let admin_state = RwSignal::new({
+        #[cfg(feature = "csr")]
+        {
+            AdminState::Loading
+        }
+        #[cfg(not(feature = "csr"))]
+        {
+            AdminState::Login
+        }
+    });
 
     #[cfg(feature = "csr")]
     Effect::new(move |_| {
@@ -127,43 +83,42 @@ fn Admin() -> impl IntoView {
         // the login form; an expired or missing session lands on the login view.
         leptos::task::spawn_local(async move {
             match api_nobody::<DashboardData>("GET", "/api/links").await {
-                Ok(value) => {
-                    set_data.set(Some(value));
-                    set_authenticated.set(true);
-                }
-                Err(e) if e == "unauthorized" => set_authenticated.set(false),
-                Err(e) => set_error.set(Some(e)),
+                Ok(data) => admin_state.set(AdminState::Dashboard { data }),
+                Err(error) if error == "unauthorized" => admin_state.set(AdminState::Login),
+                Err(error) => admin_state.set(AdminState::Error(error)),
             }
-            set_loading.set(false);
         });
     });
-    #[cfg(not(feature = "csr"))]
-    set_loading.set(false);
 
-    let loading = move || !loading.get();
-    let authenticated = move || authenticated.get();
     let spinner = || view! { <main class="center-shell"><div class="spinner"></div></main> };
-    let login = move || view! { <Login set_authenticated set_data error set_error/> };
+    let show_dashboard = Callback::new(move |data| {
+        admin_state.set(AdminState::Dashboard { data });
+    });
+    let show_login = Callback::new(move |()| admin_state.set(AdminState::Login));
 
     view! {
-        <Show when=loading fallback=spinner>
-            <Show when=authenticated fallback=login>
-                <Dashboard data set_data set_authenticated error set_error/>
-            </Show>
-        </Show>
+        {move || match &*admin_state.read() {
+            AdminState::Loading => spinner().into_any(),
+            AdminState::Login => view! { <Login on_login=show_dashboard/> }.into_any(),
+            AdminState::Error(error_message) => view! {
+                <main class="center-shell">
+                    <div class="error-banner">{error_message.clone()}</div>
+                </main>
+            }.into_any(),
+            AdminState::Dashboard { data } => {
+                let initial_data = data.clone();
+                view! { <Dashboard initial_data on_logout=show_login/> }.into_any()
+            },
+        }}
     }
 }
 
 #[component]
-fn Login(
-    set_authenticated: WriteSignal<bool>,
-    set_data: WriteSignal<Option<DashboardData>>,
-    error: ReadSignal<Option<String>>,
-    set_error: WriteSignal<Option<String>>,
-) -> impl IntoView {
+fn Login(on_login: Callback<DashboardData>) -> impl IntoView {
     let (username, set_username) = signal(String::new());
     let (password, set_password) = signal(String::new());
     let (busy, set_busy) = signal(false);
+    let (error, set_error) = signal(None::<String>);
 
     let submit = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -174,11 +129,8 @@ fn Login(
         #[cfg(feature = "csr")]
         leptos::task::spawn_local(async move {
             match api("POST", "/api/login", LoginRequest { username, password }).await {
-                Ok(value) => {
-                    set_data.set(Some(value));
-                    set_authenticated.set(true);
-                }
-                Err(e) => set_error.set(Some(e)),
+                Ok(data) => on_login.run(data),
+                Err(error) => set_error.set(Some(error)),
             }
             set_busy.set(false);
         });
@@ -205,53 +157,78 @@ fn Login(
 }
 
 #[component]
-fn Dashboard(
-    data: ReadSignal<Option<DashboardData>>,
-    set_data: WriteSignal<Option<DashboardData>>,
-    set_authenticated: WriteSignal<bool>,
-    error: ReadSignal<Option<String>>,
-    set_error: WriteSignal<Option<String>>,
-) -> impl IntoView {
-    let (code, set_code) = signal(String::new());
-    let (url, set_url) = signal(String::new());
-    let (busy, set_busy) = signal(false);
+fn Dashboard(initial_data: DashboardData, on_logout: Callback<()>) -> impl IntoView {
+    let data = RwSignal::new(initial_data);
+    let (error, set_error) = signal(None::<String>);
 
     // Keep list reloading in one closure so create/delete flows can share the
-    // same error handling and preserve the current authenticated state.
-    let refresh = move || {
+    // same state transition and preserve the current authenticated view.
+    let refresh = Callback::new(move |()| {
         #[cfg(feature = "csr")]
         leptos::task::spawn_local(async move {
             match api_nobody::<DashboardData>("GET", "/api/links").await {
-                Ok(value) => set_data.set(Some(value)),
-                Err(e) => set_error.set(Some(e)),
+                Ok(new_data) => {
+                    data.set(new_data);
+                    set_error.set(None);
+                }
+                Err(error) if error == "unauthorized" => on_logout.run(()),
+                Err(error) => set_error.set(Some(error)),
             }
         });
-    };
-    let create = move |ev: leptos::ev::SubmitEvent| {
-        ev.prevent_default();
-        set_busy.set(true);
+    });
+    let create = Action::new_local(move |request: &CreateRequest| {
         set_error.set(None);
-        let code = code.get();
-        let url = url.get();
+        let request = request.clone();
+        async move {
+            #[cfg(feature = "csr")]
+            {
+                api::<LinkRecord, _>("POST", "/api/links", request).await
+            }
+            #[cfg(not(feature = "csr"))]
+            {
+                Err("browser API unavailable".to_owned())
+            }
+        }
+    });
+    let create_result = create.value();
+    Effect::new(move |_| {
+        if let Some(result) = create_result.get() {
+            match result {
+                Ok(_) => refresh.run(()),
+                Err(error) if error == "unauthorized" => on_logout.run(()),
+                Err(error) => set_error.set(Some(error)),
+            }
+        }
+    });
+    let delete_link = Callback::new(move |code: ValidCode| {
         #[cfg(feature = "csr")]
         leptos::task::spawn_local(async move {
-            match api::<LinkRecord, _>("POST", "/api/links", CreateRequest { code, url }).await {
+            let path = format!("/api/links/{code}");
+            let result = api_nobody::<serde_json::Value>("DELETE", &path).await;
+            match result {
                 Ok(_) => {
-                    set_code.set(String::new());
-                    set_url.set(String::new());
-                    refresh();
+                    data.update(|data| {
+                        let removed_clicks = data
+                            .links
+                            .iter()
+                            .find(|link| link.code == code)
+                            .map(|link| link.clicks)
+                            .unwrap_or(0);
+                        data.links.retain(|link| link.code != code);
+                        data.total_clicks = data.total_clicks.saturating_sub(removed_clicks);
+                    });
+                    set_error.set(None);
                 }
-                Err(e) => set_error.set(Some(e)),
+                Err(error) if error == "unauthorized" => on_logout.run(()),
+                Err(error) => set_error.set(Some(error)),
             }
-            set_busy.set(false);
         });
-    };
+    });
     let logout = move |_| {
         #[cfg(feature = "csr")]
         leptos::task::spawn_local(async move {
             let _ = api::<serde_json::Value, _>("POST", "/api/logout", serde_json::json!({})).await;
-            set_authenticated.set(false);
-            set_data.set(None);
+            on_logout.run(());
         });
     };
 
@@ -261,23 +238,17 @@ fn Dashboard(
             <main class="dashboard">
                 <section class="hero-row">
                     <div><span class="eyebrow">"ADMIN CONSOLE"</span><h1>"Your links"</h1><p class="muted">"Create compact links and see where attention lands."</p></div>
-                    <div class="stat"><strong>{move || data.get().map(|d| d.total_clicks).unwrap_or(0)}</strong><span>"total clicks"</span></div>
+                    <div class="stat"><strong>{move || data.read().total_clicks}</strong><span>"total clicks"</span></div>
                 </section>
-                <section class="creator-card">
-                    <form on:submit=create>
-                        <label class="code-field"><span>"SHORT CODE"</span><div class="input-prefix"><span>"/z/"</span><input placeholder="example_short_name" pattern="[A-Za-z0-9_\\-]+" minlength="1" maxlength="32" required prop:value=code on:input=move |e| set_code.set(event_target_value(&e))/></div></label>
-                        <label class="url-field"><span>"DESTINATION URL"</span><input type="url" placeholder="https://example.com/destination" required prop:value=url on:input=move |e| set_url.set(event_target_value(&e))/></label>
-                        <button class="button" type="submit" disabled=move || busy.get()>{move || if busy.get() { "Creating…" } else { "Create link" }}</button>
-                    </form>
-                </section>
+                <CreateCode create/>
                 <ErrorBanner error/>
                 <section class="links-section">
-                    <div class="section-head"><h2>"All links"</h2><span class="pill">{move || format!("{} ACTIVE", data.get().map(|d| d.links.len()).unwrap_or(0))}</span></div>
+                    <div class="section-head"><h2>"All links"</h2><span class="pill">{move || format!("{} ACTIVE", data.read().links.len())}</span></div>
                     <div class="link-list">
-                        <For each=move || data.get().map(|d| d.links).unwrap_or_default() key=|item| item.code.clone() let:item>
-                            <LinkRow item set_data set_error/>
+                        <For each=move || data.read().links.clone() key=|item| item.code.clone() let:item>
+                            <LinkRow item on_delete=delete_link/>
                         </For>
-                        <Show when=move || data.get().map(|d| d.links.is_empty()).unwrap_or(true)>
+                        <Show when=move || data.read().links.is_empty()>
                             <div class="empty"><span>"↗"</span><h3>"No short links yet"</h3><p>"Create your first one above."</p></div>
                         </Show>
                     </div>
@@ -289,11 +260,43 @@ fn Dashboard(
 }
 
 #[component]
-fn LinkRow(
-    item: LinkRecord,
-    set_data: WriteSignal<Option<DashboardData>>,
-    set_error: WriteSignal<Option<String>>,
-) -> impl IntoView {
+fn CreateCode(create: Action<CreateRequest, Result<LinkRecord, String>>) -> impl IntoView {
+    let (code, set_code) = signal(String::new());
+    let (url, set_url) = signal(String::new());
+    let pending = create.pending();
+    let result = create.value();
+
+    Effect::new(move |_| {
+        if matches!(&*result.read(), Some(Ok(_))) {
+            set_code.set(String::new());
+            set_url.set(String::new());
+        }
+    });
+
+    let submit = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        if pending.get_untracked() {
+            return;
+        }
+        create.dispatch(CreateRequest {
+            code: code.get(),
+            url: url.get(),
+        });
+    };
+
+    view! {
+        <section class="creator-card">
+            <form on:submit=submit>
+                <label class="code-field"><span>"SHORT CODE"</span><div class="input-prefix"><span>"/z/"</span><input placeholder="example_short_name" pattern="[A-Za-z0-9_\\-]+" minlength="1" maxlength="32" required disabled=move || pending.get() prop:value=code on:input=move |e| set_code.set(event_target_value(&e))/></div></label>
+                <label class="url-field"><span>"DESTINATION URL"</span><input type="url" placeholder="https://example.com/destination" required disabled=move || pending.get() prop:value=url on:input=move |e| set_url.set(event_target_value(&e))/></label>
+                <button class="button" type="submit" disabled=move || pending.get()>{move || if pending.get() { "Creating…" } else { "Create link" }}</button>
+            </form>
+        </section>
+    }
+}
+
+#[component]
+fn LinkRow(item: LinkRecord, on_delete: Callback<ValidCode>) -> impl IntoView {
     let code_for_delete = item.code.clone();
     let short_path = format!("/z/{}", item.code);
     let destination = item.url.clone();
@@ -313,24 +316,7 @@ fn LinkRow(
             if !confirmed {
                 return;
             }
-            leptos::task::spawn_local(async move {
-                let path = format!("/api/links/{code}");
-                match api_nobody::<serde_json::Value>("DELETE", &path).await {
-                    Ok(_) => set_data.update(|state| {
-                        if let Some(d) = state {
-                            let removed_clicks = d
-                                .links
-                                .iter()
-                                .find(|link| link.code == code)
-                                .map(|link| link.clicks)
-                                .unwrap_or(0);
-                            d.links.retain(|l| l.code != code);
-                            d.total_clicks = d.total_clicks.saturating_sub(removed_clicks);
-                        }
-                    }),
-                    Err(e) => set_error.set(Some(e)),
-                }
-            });
+            on_delete.run(code);
         }
     };
     view! {
@@ -429,7 +415,7 @@ fn format_date(timestamp: i64) -> String {
 
 #[component]
 fn ErrorBanner(error: ReadSignal<Option<String>>) -> impl IntoView {
-    view! { <Show when=move || error.get().is_some()>{move || view! { <div class="error-banner">{error.get().unwrap_or_default()}</div> }}</Show> }
+    view! { <Show when=move || error.read().is_some()>{move || view! { <div class="error-banner">{error.get().unwrap_or_default()}</div> }}</Show> }
 }
 
 #[cfg(feature = "csr")]
