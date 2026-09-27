@@ -21,8 +21,10 @@ The production instance runs comfortably on AWS's smallest 64-bit Arm EC2 instan
 ## Project Layout
 
 - [`crates/zhorten-app`](crates/zhorten-app/README.md) is the standalone Leptos CSR application compiled to WebAssembly.
+- [`crates/zhorten-cli`](crates/zhorten-cli) is a command-line binding to the service layer for one-off list/create/follow/delete operations.
 - [`crates/zhorten-core`](crates/zhorten-core/README.md) contains shared datatypes and API shapes used across the workspace.
 - [`crates/zhorten-service`](crates/zhorten-service/README.md) contains the transport-agnostic functional API and its validation rules.
+- [`crates/zhorten-sled`](crates/zhorten-sled) is the sled-backed implementation of the service database trait.
 - [`crates/zhorten-server`](crates/zhorten-server/README.md) is the Axum API, redirect, authentication, sled storage, and static-file server.
 - [`crates/zhorten-fly`](crates/zhorten-fly) is a Fly.io wrapper around the sled-backed server with Fly-friendly defaults.
 - [`crates/zhorten-google`](crates/zhorten-google) is a Cloud Run wrapper that stores links in Firestore.
@@ -36,7 +38,9 @@ zhorten is organized as a small workspace with narrow boundaries:
 
 - `zhorten-core` is the shared contract crate. It defines route-safe short-link codes plus the JSON request and response types used by both sides of the application.
 - `zhorten-service` is the application service layer. It exposes plain Rust functions for listing, creating, deleting, and following links. It is transport-agnostic and talks to persistence only through its `Database` trait. Most of its work is delegation, with functional validation for short codes and destination URLs where needed.
-- `zhorten-server` is an Axum adapter around the service layer. It owns HTTP routing, request extraction, response/status-code mapping, sessions, security headers, static-file serving, command-line configuration, and the sled implementation of the service database trait. It should not contain app logic.
+- `zhorten-sled` is the embedded storage adapter used by the standalone server, Fly wrapper, redirect benchmark, and CLI.
+- `zhorten-server` is an Axum adapter around the service layer. It owns HTTP routing, request extraction, response/status-code mapping, sessions, security headers, static-file serving, and command-line configuration. It should not contain app logic.
+- `zhorten-cli` is a command-line adapter around the service layer. It starts no web server; each process performs one requested service operation and exits.
 - `zhorten-fly` and `zhorten-google` are deployment-specific binaries. They choose platform defaults and storage adapters, then start the shared server.
 - `zhorten-app` is the Leptos browser UI. It is client-side rendered, compiled to WebAssembly with the `csr` feature, and calls the server's same-origin JSON API using the shared shapes from `zhorten-core`.
 
@@ -45,7 +49,9 @@ The dependency direction is intentionally simple:
 ```text
 zhorten-app    -> zhorten-core
 zhorten-service -> zhorten-core
-zhorten-server -> zhorten-service -> zhorten-core
+zhorten-sled -> zhorten-service -> zhorten-core
+zhorten-server -> zhorten-sled -> zhorten-service -> zhorten-core
+zhorten-cli -> zhorten-sled -> zhorten-service -> zhorten-core
 deploy binaries -> zhorten-server and storage-specific dependencies
 ```
 
@@ -117,6 +123,33 @@ The command-line options are also available through environment variables:
 | `--secure-cookies` | `ZHORTEN_SECURE_COOKIES` | `false` |
 
 The password is supplied at startup, converted to an Argon2 hash, and never written to the database. Authentication is managed by `axum-login` with a `tower-sessions` in-memory store. Sessions end when their one-day cookie expires or the service restarts.
+
+## Run One-Off CLI Operations
+
+`zhorten-cli` binds the same service layer to a command-line interface without
+starting Axum or serving static files. It is useful for local inspection,
+scripting, and demonstrating the transport-agnostic service boundary.
+
+```bash
+cargo run --package zhorten-cli -- --database ./data/zhorten.db create docs https://example.com/docs
+cargo run --package zhorten-cli -- --database ./data/zhorten.db follow docs
+cargo run --package zhorten-cli -- --database ./data/zhorten.db list
+cargo run --package zhorten-cli -- --database ./data/zhorten.db delete docs
+```
+
+Commands:
+
+- `list` or `dashboard` prints dashboard JSON.
+- `create <code> <url>` validates and creates one short link, then prints the created record as JSON.
+- `follow <code>` resolves the short code, records a click, and prints the destination URL.
+- `delete <code>` or `remove <code>` deletes a short link and treats missing links as a successful no-op.
+
+The CLI accepts the sled storage flags used by the server:
+
+| Option | Environment variable | Default |
+| --- | --- | --- |
+| `--database` | `ZHORTEN_DB` | `./data/zhorten.db` |
+| `--cache-capacity` | `ZHORTEN_CACHE_CAPACITY` | `67108864` (64 MiB) |
 
 ## MCP
 

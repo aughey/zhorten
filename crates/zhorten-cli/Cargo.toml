@@ -1,0 +1,16 @@
+[package]
+name = "zhorten-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "zhorten-cli"
+path = "src/main.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }
+zhorten-core = { workspace = true, features = ["cli"] }
+zhorten-service.workspace = true
+zhorten-sled.workspace = true

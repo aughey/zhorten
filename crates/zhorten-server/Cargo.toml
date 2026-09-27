@@ -14,7 +14,6 @@ password-auth = "1.0.0"
 rmcp = { version = "3.4.1", features = ["transport-streamable-http-server"] }
 serde.workspace = true
 serde_json.workspace = true
-sled = "0.34.7"
 time = "0.3.55"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "signal"] }
 tower-http = { version = "0.7.1", features = ["fs", "trace"] }
@@ -24,6 +23,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 url = "2.5.8"
 zhorten-core = { workspace = true, features = ["cli"] }
 zhorten-service.workspace = true
+zhorten-sled.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["io-util", "net", "rt-multi-thread", "time"] }

@@ -2,7 +2,7 @@ pub mod auth;
 pub mod handlers;
 pub mod helpers;
 pub mod mcp;
-pub mod sled_db;
+pub use zhorten_sled as sled_db;
 
 use axum::{
     Router,

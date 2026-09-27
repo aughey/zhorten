@@ -5,7 +5,7 @@ use std::{
 };
 
 pub use clap::Parser;
-use clap::{Args, ValueHint};
+use clap::{Args, Subcommand, ValueHint};
 
 pub const DEFAULT_FIRESTORE_COLLECTION: &str = "links";
 
@@ -80,6 +80,43 @@ pub struct FlySledArgs {
 }
 
 #[derive(Parser)]
+#[command(
+    version,
+    about = "Run one zhorten service operation without starting a web server"
+)]
+pub struct CliSledArgs {
+    #[command(flatten)]
+    pub sled: SledArgs,
+    #[command(subcommand)]
+    pub action: CliAction,
+}
+
+#[derive(Subcommand)]
+pub enum CliAction {
+    /// Print dashboard data as JSON.
+    #[command(alias = "dashboard")]
+    List,
+    /// Create one short link.
+    Create {
+        /// Route-safe short code.
+        code: String,
+        /// Destination URL.
+        url: String,
+    },
+    /// Resolve a short code, increment its click count, and print the destination URL.
+    Follow {
+        /// Route-safe short code.
+        code: String,
+    },
+    /// Delete one short link. Missing links are treated as a successful no-op.
+    #[command(alias = "remove")]
+    Delete {
+        /// Route-safe short code.
+        code: String,
+    },
+}
+
+#[derive(Parser)]
 #[command(version, about = "Google Cloud Run deployment wrapper for zhorten")]
 pub struct GoogleCloudRunArgs {
     #[command(flatten)]
@@ -145,6 +182,15 @@ impl FlySledArgs {
             .database
             .clone()
             .unwrap_or_else(|| "/data/zhorten.db".into())
+    }
+}
+
+impl CliSledArgs {
+    pub fn database(&self) -> String {
+        self.sled
+            .database
+            .clone()
+            .unwrap_or_else(|| "./data/zhorten.db".into())
     }
 }
 
