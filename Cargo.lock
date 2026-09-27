@@ -4405,6 +4405,7 @@ dependencies = [
 name = "zhorten-core"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "serde",
  "serde_json",
 ]
@@ -4413,9 +4414,9 @@ dependencies = [
 name = "zhorten-fly"
 version = "0.1.0"
 dependencies = [
- "clap",
  "tokio",
  "tracing-subscriber",
+ "zhorten-core",
  "zhorten-server",
 ]
 
@@ -4423,7 +4424,6 @@ dependencies = [
 name = "zhorten-google"
 version = "0.1.0"
 dependencies = [
- "clap",
  "firestore",
  "futures",
  "serde",
@@ -4441,7 +4441,6 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "axum-login",
- "clap",
  "password-auth",
  "rmcp",
  "serde",

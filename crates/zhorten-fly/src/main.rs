@@ -1,38 +1,7 @@
-use clap::Parser;
-use std::{net::SocketAddr, path::PathBuf};
+use zhorten_core::cli::{FlySledArgs, Parser, validate_mcp, validate_password};
 use zhorten_server::{
     ServerOptions, SledServerOptions, healthy, serve, sled_db::Database, sled_router,
 };
-
-#[derive(Parser)]
-#[command(version, about = "Fly.io deployment wrapper for zhorten")]
-struct Args {
-    #[arg(long, env = "ZHORTEN_USERNAME", default_value = "admin")]
-    username: String,
-    #[arg(long, env = "ZHORTEN_PASSWORD", hide_env_values = true)]
-    password: String,
-    #[arg(long, env = "ZHORTEN_DB", default_value = "/data/zhorten.db")]
-    database: String,
-    #[arg(long, env = "ZHORTEN_CACHE_CAPACITY", default_value_t = 64 * 1024 * 1024)]
-    cache_capacity: u64,
-    #[arg(long, env = "ZHORTEN_ADDR", default_value = "0.0.0.0:3000")]
-    address: SocketAddr,
-    #[arg(long, env = "ZHORTEN_SITE_ROOT", default_value = "/app/site")]
-    site_root: PathBuf,
-    #[arg(long, env = "ZHORTEN_MCP", hide_env_values = true)]
-    mcp: Option<String>,
-    #[arg(
-        long,
-        env = "ZHORTEN_MCP_HOST",
-        value_delimiter = ',',
-        requires = "mcp"
-    )]
-    mcp_host: Vec<String>,
-    #[arg(long, env = "ZHORTEN_SECURE_COOKIES", default_value_t = true)]
-    secure_cookies: bool,
-    #[arg(long, hide = true)]
-    healthcheck: bool,
-}
 
 #[tokio::main]
 async fn main() {
@@ -40,30 +9,41 @@ async fn main() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let args = Args::parse();
-    if args.healthcheck {
-        std::process::exit(if healthy(args.address) { 0 } else { 1 });
+    let args = FlySledArgs::parse();
+    let address = args.address();
+    if args.server.healthcheck {
+        std::process::exit(if healthy(address) { 0 } else { 1 });
     }
-    if args.password.trim().is_empty() {
-        eprintln!("error: --password (or ZHORTEN_PASSWORD) must not be empty");
-        std::process::exit(2);
+    if let Err(message) = validate_password(&args.server.password) {
+        exit_with_config_error(message);
+    }
+    if let Err(message) = validate_mcp(&args.mcp) {
+        exit_with_config_error(message);
     }
 
-    let database =
-        Database::open(&args.database, args.cache_capacity).expect("unable to open sled database");
+    let database_path = args.database();
+    let site_root = args.site_root();
+    let secure_cookies = args.secure_cookies();
+    let database = Database::open(database_path, args.sled.cache_capacity)
+        .expect("unable to open sled database");
     let app = sled_router(
         database,
         SledServerOptions {
             server: ServerOptions {
-                site_root: args.site_root,
-                username: args.username,
-                password: args.password,
-                secure_cookies: args.secure_cookies,
+                site_root,
+                username: args.server.username,
+                password: args.server.password,
+                secure_cookies,
             },
-            mcp_token: args.mcp,
-            mcp_hosts: args.mcp_host,
+            mcp_token: args.mcp.mcp,
+            mcp_hosts: args.mcp.mcp_host,
         },
     );
 
-    serve(args.address, app).await.expect("server error");
+    serve(address, app).await.expect("server error");
+}
+
+fn exit_with_config_error(message: &str) -> ! {
+    eprintln!("error: {message}");
+    std::process::exit(2);
 }

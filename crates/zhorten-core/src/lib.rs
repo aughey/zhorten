@@ -1,4 +1,6 @@
 pub mod api;
+#[cfg(feature = "cli")]
+pub mod cli;
 
 use serde::{Deserialize, Deserializer, Serialize, de};
 use std::fmt;

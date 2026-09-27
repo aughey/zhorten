@@ -8,7 +8,7 @@ name = "zhorten-fly"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.6.7", features = ["derive", "env"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+zhorten-core = { workspace = true, features = ["cli"] }
 zhorten-server = { path = "../zhorten-server" }
