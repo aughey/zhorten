@@ -1,7 +1,5 @@
 use zhorten_core::cli::{FlySledArgs, Parser, validate_mcp, validate_password};
-use zhorten_server::{
-    ServerOptions, SledServerOptions, healthy, serve, sled_db::Database, sled_router,
-};
+use zhorten_server::{LocalServerOptions, ServerOptions, healthy, local_router, serve};
 
 #[tokio::main]
 async fn main() {
@@ -23,11 +21,10 @@ async fn main() {
 
     let site_root = args.site_root();
     let secure_cookies = args.secure_cookies();
-    let database = Database::open(args.sled.database, args.sled.cache_capacity)
-        .expect("unable to open sled database");
-    let app = sled_router(
+    let database = zhorten_database::open(&args.database).expect("unable to open database");
+    let app = local_router(
         database,
-        SledServerOptions {
+        LocalServerOptions {
             server: ServerOptions {
                 site_root,
                 username: args.server.username,

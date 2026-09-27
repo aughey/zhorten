@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use firestore::{
     FirestoreDb, FirestoreTransactionOps,
     errors::{BackoffError, FirestoreError},
@@ -10,6 +11,7 @@ use zhorten_core::{
     ValidCode,
     api::{DashboardData, LinkRecord},
 };
+use zhorten_service::ClickContext;
 
 #[derive(Clone)]
 pub struct FirestoreDatabase {
@@ -54,6 +56,7 @@ impl FirestoreDatabase {
     }
 }
 
+#[async_trait]
 impl zhorten_service::Database for FirestoreDatabase {
     type Error = Error;
 
@@ -117,10 +120,11 @@ impl zhorten_service::Database for FirestoreDatabase {
     async fn follow_link(
         &self,
         code: &ValidCode,
-        clicked_at: i64,
+        context: ClickContext,
     ) -> Result<Option<String>, Self::Error> {
         let collection = self.collection.clone();
         let code = code.to_string();
+        let clicked_at = context.clicked_at;
         self.db
             .run_transaction(move |db, transaction| {
                 let collection = collection.clone();

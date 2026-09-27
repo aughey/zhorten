@@ -1,4 +1,4 @@
-use crate::{helpers::now, sled_db::Database};
+use crate::helpers::now;
 use axum::{
     body::Body,
     extract::{Request, State},
@@ -20,6 +20,7 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use zhorten_core::api::LinkRecord;
+use zhorten_database::SharedDatabase;
 use zhorten_service::{CreateLinkError, RemoveLinkError};
 
 #[derive(Clone)]
@@ -27,7 +28,7 @@ pub struct BearerToken(pub String);
 
 #[derive(Clone)]
 pub struct ZHortenMcp {
-    database: Database,
+    database: SharedDatabase,
     tool_router: ToolRouter<Self>,
 }
 
@@ -108,7 +109,7 @@ pub struct BulkDeleteLinksOutput {
 }
 
 impl ZHortenMcp {
-    pub fn new(database: Database) -> Self {
+    pub fn new(database: SharedDatabase) -> Self {
         Self {
             database,
             tool_router: Self::tool_router(),
@@ -207,7 +208,7 @@ impl ServerHandler for ZHortenMcp {
 }
 
 pub fn service(
-    database: Database,
+    database: SharedDatabase,
     allowed_hosts: Vec<String>,
 ) -> StreamableHttpService<ZHortenMcp, LocalSessionManager> {
     StreamableHttpService::new(
@@ -246,7 +247,7 @@ pub async fn bearer_auth(
 }
 
 async fn create_link(
-    database: &Database,
+    database: &SharedDatabase,
     request: CreateLinkRequest,
 ) -> Result<CreateLinkOutput, ErrorData> {
     match zhorten_service::create_link(database, request.code, request.url, now()).await {
@@ -269,7 +270,10 @@ async fn create_link(
     }
 }
 
-async fn delete_link(database: &Database, code: String) -> Result<DeleteLinkOutput, ErrorData> {
+async fn delete_link(
+    database: &SharedDatabase,
+    code: String,
+) -> Result<DeleteLinkOutput, ErrorData> {
     match zhorten_service::remove_link(database, code.clone()).await {
         Ok(()) => Ok(DeleteLinkOutput {
             ok: true,

@@ -2,7 +2,6 @@ pub mod auth;
 pub mod handlers;
 pub mod helpers;
 pub mod mcp;
-pub use zhorten_sled as sled_db;
 
 use axum::{
     Router,
@@ -25,6 +24,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tower_sessions::{Expiry, MemoryStore, SessionManagerLayer, cookie::SameSite};
+use zhorten_database::SharedDatabase;
 use zhorten_service::Database;
 
 #[derive(Clone)]
@@ -36,7 +36,7 @@ pub struct ServerOptions {
 }
 
 #[derive(Clone)]
-pub struct SledServerOptions {
+pub struct LocalServerOptions {
     pub server: ServerOptions,
     pub mcp_token: Option<String>,
     pub mcp_hosts: Vec<String>,
@@ -88,8 +88,8 @@ where
         .with_state(state)
 }
 
-/// Compose the baseline sled-backed server, including the optional MCP endpoint.
-pub fn sled_router(database: sled_db::Database, options: SledServerOptions) -> Router {
+/// Compose the local-database server, including the optional MCP endpoint.
+pub fn local_router(database: SharedDatabase, options: LocalServerOptions) -> Router {
     let mut router = router(database.clone(), options.server);
     if let Some(token) = options.mcp_token {
         tracing::info!("MCP endpoint enabled at /mcp");
@@ -107,9 +107,12 @@ pub fn sled_router(database: sled_db::Database, options: SledServerOptions) -> R
 pub async fn serve(address: SocketAddr, app: Router) -> std::io::Result<()> {
     tracing::info!("zhorten listening on http://{}", address);
     let listener = tokio::net::TcpListener::bind(address).await?;
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
 }
 
 /// Probe the configured listener for container health checks.

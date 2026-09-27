@@ -8,6 +8,7 @@ name = "zhorten-google"
 path = "src/main.rs"
 
 [dependencies]
+async-trait.workspace = true
 firestore = { version = "0.57.1", default-features = false, features = ["tls-webpki-roots"] }
 futures = "0.3.34"
 serde.workspace = true

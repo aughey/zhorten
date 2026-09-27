@@ -1,4 +1,5 @@
 use super::*;
+use async_trait::async_trait;
 use std::{convert::Infallible, sync::Mutex};
 
 #[derive(Default)]
@@ -7,6 +8,7 @@ struct FakeDatabase {
     followed_at: Mutex<Option<i64>>,
 }
 
+#[async_trait]
 impl Database for FakeDatabase {
     type Error = Infallible;
 
@@ -56,9 +58,9 @@ impl Database for FakeDatabase {
     async fn follow_link(
         &self,
         code: &ValidCode,
-        clicked_at: i64,
+        context: ClickContext,
     ) -> Result<Option<String>, Self::Error> {
-        *self.followed_at.lock().unwrap() = Some(clicked_at);
+        *self.followed_at.lock().unwrap() = Some(context.clicked_at);
         let url = self
             .links
             .lock()
@@ -118,15 +120,17 @@ async fn follow_link_validates_code_and_reports_missing_links() {
         .unwrap();
 
     assert_eq!(
-        follow_link(&database, "bad/code".into(), 200).await,
+        follow_link(&database, "bad/code".into(), ClickContext::new(200)).await,
         Err(FollowLinkError::InvalidCode)
     );
     assert_eq!(
-        follow_link(&database, "missing".into(), 200).await,
+        follow_link(&database, "missing".into(), ClickContext::new(200)).await,
         Err(FollowLinkError::NotFound)
     );
     assert_eq!(
-        follow_link(&database, "docs".into(), 250).await.unwrap(),
+        follow_link(&database, "docs".into(), ClickContext::new(250))
+            .await
+            .unwrap(),
         "https://example.com/"
     );
     assert_eq!(*database.followed_at.lock().unwrap(), Some(250));

@@ -1,15 +1,19 @@
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use std::{fmt, path::Path};
 use url::Url;
 use zhorten_core::{
     ValidCode,
     api::{DashboardData, LinkRecord},
 };
+use zhorten_service::ClickContext;
 
 #[derive(Clone)]
 pub struct Database {
     db: sled::Db,
     links: sled::Tree,
     clicks: sled::Tree,
+    analytics_enabled: bool,
 }
 
 #[derive(Debug)]
@@ -21,30 +25,49 @@ pub enum Error {
 impl Database {
     /// Open the embedded database and its named trees.
     ///
-    /// `links` is the authoritative store for current short links. `clicks`
-    /// keeps append-only timestamps for future analytics without changing the
-    /// dashboard API today.
     pub fn open(path: impl AsRef<Path>, cache_capacity: u64) -> Result<Self, Error> {
+        Self::open_with_analytics(path, cache_capacity, false)
+    }
+
+    pub fn open_with_analytics(
+        path: impl AsRef<Path>,
+        cache_capacity: u64,
+        analytics_enabled: bool,
+    ) -> Result<Self, Error> {
         let db = sled::Config::new()
             .path(path)
             .cache_capacity(cache_capacity)
             .open()?;
-        Self::from_db(db)
+        Self::from_db(db, analytics_enabled)
     }
 
     #[cfg(test)]
-    fn temporary() -> Result<Self, Error> {
+    fn temporary(analytics_enabled: bool) -> Result<Self, Error> {
         let db = sled::Config::new().temporary(true).open()?;
-        Self::from_db(db)
+        Self::from_db(db, analytics_enabled)
     }
 
-    fn from_db(db: sled::Db) -> Result<Self, Error> {
+    fn from_db(db: sled::Db, analytics_enabled: bool) -> Result<Self, Error> {
         let links = db.open_tree("links")?;
         let clicks = db.open_tree("clicks")?;
-        Ok(Self { db, links, clicks })
+        Ok(Self {
+            db,
+            links,
+            clicks,
+            analytics_enabled,
+        })
     }
 }
 
+#[derive(Deserialize, Serialize)]
+struct ClickEvent {
+    code: String,
+    clicked_at: i64,
+    client_ip: Option<String>,
+    user_agent: Option<String>,
+}
+
+#[async_trait]
 impl zhorten_service::Database for Database {
     type Error = Error;
 
@@ -107,12 +130,13 @@ impl zhorten_service::Database for Database {
     async fn follow_link(
         &self,
         code: &ValidCode,
-        clicked_at: i64,
+        context: ClickContext,
     ) -> Result<Option<String>, Self::Error> {
         let Some(bytes) = self.links.get(code.as_str().as_bytes())? else {
             return Ok(None);
         };
         let record = serde_json::from_slice::<LinkRecord>(&bytes)?;
+        let clicked_at = context.clicked_at;
         self.links
             .update_and_fetch(code.as_str().as_bytes(), |previous| {
                 let mut current =
@@ -122,14 +146,23 @@ impl zhorten_service::Database for Database {
                 serde_json::to_vec(&current).ok()
             })?;
 
-        // The separate click tree is intentionally best-effort: redirecting is
-        // more important than preserving a raw analytics event if this insert
-        // fails after the aggregate count has already been updated.
-        let id = self.db.generate_id().unwrap_or_default();
-        let _ = self.clicks.insert(
-            format!("{code}:{id:020}").as_bytes(),
-            clicked_at.to_be_bytes().as_slice(),
-        );
+        if self.analytics_enabled {
+            // The separate click tree is intentionally best-effort: redirecting
+            // is more important than preserving a raw analytics event if this
+            // insert fails after the aggregate count has already been updated.
+            let id = self.db.generate_id().unwrap_or_default();
+            let event = ClickEvent {
+                code: code.as_str().to_owned(),
+                clicked_at,
+                client_ip: context.client_ip,
+                user_agent: context.user_agent,
+            };
+            if let Ok(bytes) = serde_json::to_vec(&event) {
+                let _ = self
+                    .clicks
+                    .insert(format!("{code}:{id:020}").as_bytes(), bytes.as_slice());
+            }
+        }
         Ok(Some(record.url))
     }
 }
@@ -164,7 +197,7 @@ mod tests {
 
     #[tokio::test]
     async fn link_lifecycle_updates_dashboard_and_clicks() {
-        let database = Database::temporary().unwrap();
+        let database = Database::temporary(false).unwrap();
         let code = ValidCode::try_from("docs").unwrap();
         let url = Url::parse("https://example.com/").unwrap();
 
@@ -183,7 +216,10 @@ mod tests {
                 .is_none()
         );
         assert_eq!(
-            database.follow_link(&record.code, 200).await.unwrap(),
+            database
+                .follow_link(&record.code, ClickContext::new(200))
+                .await
+                .unwrap(),
             Some(record.url.clone())
         );
 
@@ -194,10 +230,52 @@ mod tests {
         database.remove_link(&record.code).await.unwrap();
         assert!(
             database
-                .follow_link(&record.code, 300)
+                .follow_link(&record.code, ClickContext::new(300))
                 .await
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[tokio::test]
+    async fn analytics_events_are_optional() {
+        let database = Database::temporary(false).unwrap();
+        let code = ValidCode::try_from("docs").unwrap();
+        database
+            .create_link(
+                code.clone(),
+                Url::parse("https://example.com/").unwrap(),
+                100,
+            )
+            .await
+            .unwrap();
+        database
+            .follow_link(&code, ClickContext::new(200))
+            .await
+            .unwrap();
+        assert_eq!(database.clicks.len(), 0);
+
+        let database = Database::temporary(true).unwrap();
+        let code = ValidCode::try_from("docs").unwrap();
+        database
+            .create_link(
+                code.clone(),
+                Url::parse("https://example.com/").unwrap(),
+                100,
+            )
+            .await
+            .unwrap();
+        database
+            .follow_link(
+                &code,
+                ClickContext {
+                    clicked_at: 200,
+                    client_ip: Some("127.0.0.1".into()),
+                    user_agent: Some("zhorten-test".into()),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(database.clicks.len(), 1);
     }
 }

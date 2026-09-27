@@ -1,7 +1,7 @@
 use std::{net::SocketAddr, path::PathBuf};
 
 pub use clap::Parser;
-use clap::{ArgAction, Args, Subcommand, ValueHint};
+use clap::{ArgAction, Args, Subcommand, ValueEnum, ValueHint};
 
 #[derive(Args)]
 pub struct ServerArgs {
@@ -23,10 +23,42 @@ pub struct ServerArgs {
     pub healthcheck: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum DatabaseBackend {
+    Sled,
+    Sqlite,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum AnalyticsMode {
+    Disabled,
+    Enabled,
+}
+
+impl AnalyticsMode {
+    pub fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
+
 #[derive(Args)]
-pub struct SledArgs {
+pub struct DatabaseArgs {
+    #[arg(
+        long = "database-backend",
+        env = "ZHORTEN_DATABASE_BACKEND",
+        value_enum,
+        default_value_t = DatabaseBackend::Sled
+    )]
+    pub backend: DatabaseBackend,
     #[arg(long, env = "ZHORTEN_DB", value_hint = ValueHint::AnyPath)]
     pub database: String,
+    #[arg(
+        long = "analytics",
+        env = "ZHORTEN_ANALYTICS",
+        value_enum,
+        default_value_t = AnalyticsMode::Disabled
+    )]
+    pub analytics: AnalyticsMode,
     #[arg(long, env = "ZHORTEN_CACHE_CAPACITY", default_value_t = 64 * 1024 * 1024)]
     pub cache_capacity: u64,
 }
@@ -52,7 +84,7 @@ pub struct StandaloneSledArgs {
     #[command(flatten)]
     pub server: ServerArgs,
     #[command(flatten)]
-    pub sled: SledArgs,
+    pub database: DatabaseArgs,
     #[command(flatten)]
     pub mcp: McpArgs,
 }
@@ -63,7 +95,7 @@ pub struct FlySledArgs {
     #[command(flatten)]
     pub server: ServerArgs,
     #[command(flatten)]
-    pub sled: SledArgs,
+    pub database: DatabaseArgs,
     #[command(flatten)]
     pub mcp: McpArgs,
 }
@@ -75,7 +107,7 @@ pub struct FlySledArgs {
 )]
 pub struct CliSledArgs {
     #[command(flatten)]
-    pub sled: SledArgs,
+    pub database: DatabaseArgs,
     #[command(subcommand)]
     pub action: CliAction,
 }

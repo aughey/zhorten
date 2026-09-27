@@ -1,0 +1,12 @@
+[package]
+name = "zhorten-database"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+url = "2.5.8"
+zhorten-core = { workspace = true, features = ["cli"] }
+zhorten-service.workspace = true
+zhorten-sled.workspace = true
+zhorten-sqlite.workspace = true

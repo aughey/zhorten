@@ -8,12 +8,13 @@ use crate::{
 };
 use axum::{
     Json,
-    extract::{Path, State},
-    http::StatusCode,
+    extract::{ConnectInfo, Path, State},
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
 };
+use std::net::SocketAddr;
 use zhorten_core::api::{ApiError, CreateRequest, DashboardData, LinkRecord};
-use zhorten_service::{CreateLinkError, Database, FollowLinkError, RemoveLinkError};
+use zhorten_service::{ClickContext, CreateLinkError, Database, FollowLinkError, RemoveLinkError};
 
 #[derive(Clone)]
 pub struct AppState<D> {
@@ -92,11 +93,17 @@ where
 }
 
 /// Resolve a public short code and redirect to its stored destination.
-pub async fn follow_link<D>(State(state): State<AppState<D>>, Path(code): Path<String>) -> Response
+pub async fn follow_link<D>(
+    State(state): State<AppState<D>>,
+    Path(code): Path<String>,
+    ConnectInfo(remote_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Response
 where
     D: Database,
 {
-    match zhorten_service::follow_link(&state.database, code, now()).await {
+    let context = click_context(&headers, remote_addr);
+    match zhorten_service::follow_link(&state.database, code, context).await {
         Ok(url) => Redirect::temporary(&url).into_response(),
         Err(FollowLinkError::InvalidCode | FollowLinkError::NotFound) => not_found(),
         Err(FollowLinkError::Database(error)) => {
@@ -104,6 +111,27 @@ where
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+fn click_context(headers: &HeaderMap, remote_addr: SocketAddr) -> ClickContext {
+    ClickContext {
+        clicked_at: now(),
+        client_ip: forwarded_for(headers).or_else(|| Some(remote_addr.ip().to_string())),
+        user_agent: headers
+            .get(header::USER_AGENT)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
+    }
+}
+
+fn forwarded_for(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn unauthorized<T>() -> ApiResult<T> {

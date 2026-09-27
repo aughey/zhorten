@@ -1,12 +1,12 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 use zhorten_core::cli::{CliAction, CliSledArgs, Parser};
-use zhorten_sled::Database;
+use zhorten_database::SharedDatabase;
+use zhorten_service::ClickContext;
 
 #[tokio::main]
 async fn main() {
     let args = CliSledArgs::parse();
-    let database = Database::open(args.sled.database, args.sled.cache_capacity)
-        .expect("unable to open sled database");
+    let database = zhorten_database::open(&args.database).expect("unable to open database");
 
     let result = match args.action {
         CliAction::List => list_links(&database).await,
@@ -21,29 +21,29 @@ async fn main() {
     }
 }
 
-async fn list_links(database: &Database) -> Result<(), String> {
+async fn list_links(database: &SharedDatabase) -> Result<(), String> {
     let dashboard = zhorten_service::list_links(database)
         .await
         .map_err(|error| error.to_string())?;
     print_json(&dashboard)
 }
 
-async fn create_link(database: &Database, code: String, url: String) -> Result<(), String> {
+async fn create_link(database: &SharedDatabase, code: String, url: String) -> Result<(), String> {
     let record = zhorten_service::create_link(database, code, url, now())
         .await
         .map_err(create_error)?;
     print_json(&record)
 }
 
-async fn follow_link(database: &Database, code: String) -> Result<(), String> {
-    let url = zhorten_service::follow_link(database, code, now())
+async fn follow_link(database: &SharedDatabase, code: String) -> Result<(), String> {
+    let url = zhorten_service::follow_link(database, code, ClickContext::new(now()))
         .await
         .map_err(follow_error)?;
     println!("{url}");
     Ok(())
 }
 
-async fn delete_link(database: &Database, code: String) -> Result<(), String> {
+async fn delete_link(database: &SharedDatabase, code: String) -> Result<(), String> {
     zhorten_service::remove_link(database, code)
         .await
         .map_err(remove_error)?;
@@ -65,7 +65,7 @@ fn now() -> i64 {
         .unwrap_or(i64::MAX)
 }
 
-fn create_error(error: zhorten_service::CreateLinkError<zhorten_sled::Error>) -> String {
+fn create_error(error: zhorten_service::CreateLinkError<zhorten_database::Error>) -> String {
     match error {
         zhorten_service::CreateLinkError::InvalidCode => {
             "code must be 1-32 letters, numbers, dashes, or underscores".into()
@@ -81,7 +81,7 @@ fn create_error(error: zhorten_service::CreateLinkError<zhorten_sled::Error>) ->
     }
 }
 
-fn follow_error(error: zhorten_service::FollowLinkError<zhorten_sled::Error>) -> String {
+fn follow_error(error: zhorten_service::FollowLinkError<zhorten_database::Error>) -> String {
     match error {
         zhorten_service::FollowLinkError::InvalidCode => {
             "code must be 1-32 letters, numbers, dashes, or underscores".into()
@@ -91,7 +91,7 @@ fn follow_error(error: zhorten_service::FollowLinkError<zhorten_sled::Error>) ->
     }
 }
 
-fn remove_error(error: zhorten_service::RemoveLinkError<zhorten_sled::Error>) -> String {
+fn remove_error(error: zhorten_service::RemoveLinkError<zhorten_database::Error>) -> String {
     match error {
         zhorten_service::RemoveLinkError::InvalidCode => {
             "code must be 1-32 letters, numbers, dashes, or underscores".into()

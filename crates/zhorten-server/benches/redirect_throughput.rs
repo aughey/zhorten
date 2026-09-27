@@ -12,11 +12,9 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
-use zhorten_server::{
-    ServerOptions, SledServerOptions,
-    sled_db::{Database, Error},
-    sled_router,
-};
+use zhorten_core::cli::{AnalyticsMode, DatabaseArgs, DatabaseBackend};
+use zhorten_database::SharedDatabase;
+use zhorten_server::{LocalServerOptions, ServerOptions, local_router};
 
 const CODE: &str = "bench";
 const TARGET_URL: &str = "https://example.com/bench";
@@ -28,12 +26,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cache_capacity = env_u64("ZHORTEN_REDIRECT_BENCH_CACHE_CAPACITY", 64 * 1024 * 1024);
 
     let temp = TempDir::new("zhorten-redirect-bench")?;
-    let database = Database::open(temp.path().join("zhorten.db"), cache_capacity)?;
+    let config = DatabaseArgs {
+        backend: DatabaseBackend::Sled,
+        database: temp.path().join("zhorten.db").display().to_string(),
+        analytics: AnalyticsMode::Disabled,
+        cache_capacity,
+    };
+    let database = zhorten_database::open(&config)?;
     seed_link(&database).await?;
 
-    let app = sled_router(
+    let app = local_router(
         database,
-        SledServerOptions {
+        LocalServerOptions {
             server: ServerOptions {
                 site_root: temp.path().join("site"),
                 username: "admin".into(),
@@ -49,9 +53,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await?;
     let address = listener.local_addr()?;
     let server = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .await
-            .expect("benchmark server failed");
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .expect("benchmark server failed");
     });
 
     warm_up(address).await?;
@@ -87,14 +94,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn seed_link(database: &Database) -> Result<(), Box<dyn std::error::Error>> {
+async fn seed_link(database: &SharedDatabase) -> Result<(), Box<dyn std::error::Error>> {
     zhorten_service::create_link(database, CODE.to_owned(), TARGET_URL, 0)
         .await
         .map_err(|error| match error {
-            zhorten_service::CreateLinkError::Database(error) => error,
-            other => Error::InvalidRecord(serde_json::Error::io(io::Error::other(format!(
-                "seed failed: {other:?}"
-            )))),
+            zhorten_service::CreateLinkError::Database(error) => io::Error::other(error),
+            other => io::Error::other(format!("seed failed: {other:?}")),
         })?;
     Ok(())
 }

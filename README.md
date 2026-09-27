@@ -2,7 +2,7 @@
 
 zhorten is a tiny, simple replacement for [YOURLS](https://yourls.org/). It provides short links, click counts, QR codes, and a private administration screen without requiring a separate database or web server.
 
-The application is written in Rust with a client-side rendered Leptos app and a small Axum server. The server exposes only redirect and JSON API routes, serves the static browser bundle, and stores links in an embedded sled database. The goal is a fast, secure deployment with very little memory or operational overhead.
+The application is written in Rust with a client-side rendered Leptos app and a small Axum server. The server exposes only redirect and JSON API routes, serves the static browser bundle, and stores links in an embedded local database. The goal is a fast, secure deployment with very little memory or operational overhead.
 
 The production instance runs comfortably on AWS's smallest 64-bit Arm EC2 instance, a `t4g.nano` with 512 MB of memory, for a few dollars per month.
 
@@ -24,9 +24,11 @@ The production instance runs comfortably on AWS's smallest 64-bit Arm EC2 instan
 - [`crates/zhorten-cli`](crates/zhorten-cli) is a command-line binding to the service layer for one-off list/create/follow/delete operations.
 - [`crates/zhorten-core`](crates/zhorten-core/README.md) contains shared datatypes and API shapes used across the workspace.
 - [`crates/zhorten-service`](crates/zhorten-service/README.md) contains the transport-agnostic functional API and its validation rules.
+- [`crates/zhorten-database`](crates/zhorten-database) opens the configured local database backend behind the service trait.
 - [`crates/zhorten-sled`](crates/zhorten-sled) is the sled-backed implementation of the service database trait.
-- [`crates/zhorten-server`](crates/zhorten-server/README.md) is the Axum API, redirect, authentication, sled storage, and static-file server.
-- [`crates/zhorten-fly`](crates/zhorten-fly) is a Fly.io wrapper around the sled-backed server with Fly-friendly defaults.
+- [`crates/zhorten-sqlite`](crates/zhorten-sqlite) is the SQLite-backed implementation of the service database trait.
+- [`crates/zhorten-server`](crates/zhorten-server/README.md) is the Axum API, redirect, authentication, storage factory, and static-file server.
+- [`crates/zhorten-fly`](crates/zhorten-fly) is a Fly.io wrapper around the local-database server with Fly-friendly defaults.
 - [`crates/zhorten-google`](crates/zhorten-google) is a Cloud Run wrapper that stores links in Firestore.
 - `public` contains the HTML shell and source assets copied into the browser bundle.
 
@@ -38,7 +40,8 @@ zhorten is organized as a small workspace with narrow boundaries:
 
 - `zhorten-core` is the shared contract crate. It defines route-safe short-link codes plus the JSON request and response types used by both sides of the application.
 - `zhorten-service` is the application service layer. It exposes plain Rust functions for listing, creating, deleting, and following links. It is transport-agnostic and talks to persistence only through its `Database` trait. Most of its work is delegation, with functional validation for short codes and destination URLs where needed.
-- `zhorten-sled` is the embedded storage adapter used by the standalone server, Fly wrapper, redirect benchmark, and CLI.
+- `zhorten-sled` and `zhorten-sqlite` are interchangeable local storage adapters used through `zhorten-database`.
+- `zhorten-database` is the local storage factory. It accepts configuration, opens sled or SQLite, and returns a shared database trait object to executable entry points.
 - `zhorten-server` is an Axum adapter around the service layer. It owns HTTP routing, request extraction, response/status-code mapping, sessions, security headers, static-file serving, and command-line configuration. It should not contain app logic.
 - `zhorten-cli` is a command-line adapter around the service layer. It starts no web server; each process performs one requested service operation and exits.
 - `zhorten-fly` and `zhorten-google` are deployment-specific binaries. They choose platform defaults and storage adapters, then start the shared server.
@@ -49,9 +52,10 @@ The dependency direction is intentionally simple:
 ```text
 zhorten-app    -> zhorten-core
 zhorten-service -> zhorten-core
-zhorten-sled -> zhorten-service -> zhorten-core
-zhorten-server -> zhorten-sled -> zhorten-service -> zhorten-core
-zhorten-cli -> zhorten-sled -> zhorten-service -> zhorten-core
+zhorten-sled / zhorten-sqlite -> zhorten-service -> zhorten-core
+zhorten-database -> local storage adapters -> zhorten-service -> zhorten-core
+zhorten-server -> zhorten-database -> zhorten-service -> zhorten-core
+zhorten-cli -> zhorten-database -> zhorten-service -> zhorten-core
 deploy binaries -> zhorten-server and storage-specific dependencies
 ```
 
@@ -114,9 +118,11 @@ The command-line options are also available through environment variables. The l
 | --- | --- | --- |
 | `--username` | `ZHORTEN_USERNAME` | Required |
 | `--password` | `ZHORTEN_PASSWORD` | Required |
+| `--database-backend sled|sqlite` | `ZHORTEN_DATABASE_BACKEND` | `sled` |
 | `--database` | `ZHORTEN_DB` | Required |
+| `--analytics disabled|enabled` | `ZHORTEN_ANALYTICS` | `disabled` |
 | `--address` | `ZHORTEN_ADDR` | Required |
-| `--cache-capacity` | `ZHORTEN_CACHE_CAPACITY` | `67108864` (64 MiB) |
+| `--cache-capacity` | `ZHORTEN_CACHE_CAPACITY` | `67108864` (64 MiB, sled only) |
 | `--site-root` | `ZHORTEN_SITE_ROOT` | `./target/site` for `zhorten`, `/app/site` for deployment binaries |
 | `--secure-cookies true|false` | `ZHORTEN_SECURE_COOKIES` | `false` for `zhorten`, `true` for deployment binaries |
 | `--mcp` | `ZHORTEN_MCP` | Disabled |
@@ -144,12 +150,14 @@ Commands:
 - `follow <code>` resolves the short code, records a click, and prints the destination URL.
 - `delete <code>` or `remove <code>` deletes a short link and treats missing links as a successful no-op.
 
-The CLI accepts the sled storage flags used by the server. The database path is explicit; cache capacity defaults to 64 MiB.
+The CLI accepts the same local storage flags used by the server. The database path is explicit; sled treats it as a database directory, while SQLite treats it as a database file.
 
 | Option | Environment variable | Default |
 | --- | --- | --- |
+| `--database-backend sled|sqlite` | `ZHORTEN_DATABASE_BACKEND` | `sled` |
 | `--database` | `ZHORTEN_DB` | Required |
-| `--cache-capacity` | `ZHORTEN_CACHE_CAPACITY` | `67108864` (64 MiB) |
+| `--analytics disabled|enabled` | `ZHORTEN_ANALYTICS` | `disabled` |
+| `--cache-capacity` | `ZHORTEN_CACHE_CAPACITY` | `67108864` (64 MiB, sled only) |
 
 ## MCP
 
