@@ -227,7 +227,7 @@ fn Dashboard(initial_data: DashboardData, on_logout: Callback<()>) -> impl IntoV
     let logout = move |_| {
         #[cfg(feature = "csr")]
         leptos::task::spawn_local(async move {
-            let _ = api::<serde_json::Value, _>("POST", "/api/logout", serde_json::json!({})).await;
+            let _ = api_nobody::<serde_json::Value>("POST", "/api/logout").await;
             on_logout.run(());
         });
     };
