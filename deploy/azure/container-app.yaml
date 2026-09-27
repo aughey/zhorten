@@ -1,0 +1,77 @@
+location: eastus
+name: zhorten
+properties:
+  configuration:
+    activeRevisionsMode: Single
+    ingress:
+      allowInsecure: false
+      external: true
+      targetPort: 3000
+      traffic:
+        - latestRevision: true
+          weight: 100
+      transport: http
+    secrets:
+      - name: zhorten-password
+        value: replace-with-a-long-random-password
+  template:
+    containers:
+      - name: zhorten
+        image: ghcr.io/aughey/zhorten:latest
+        env:
+          - name: ZHORTEN_USERNAME
+            value: admin
+          - name: ZHORTEN_PASSWORD
+            secretRef: zhorten-password
+          - name: ZHORTEN_ADDR
+            value: 0.0.0.0:3000
+          - name: ZHORTEN_DB
+            value: /data/zhorten.db
+          - name: ZHORTEN_CACHE_CAPACITY
+            value: "67108864"
+          - name: ZHORTEN_SITE_ROOT
+            value: /app/site
+          - name: ZHORTEN_SECURE_COOKIES
+            value: "true"
+        probes:
+          - type: Startup
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+          - type: Liveness
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          - type: Readiness
+            httpGet:
+              path: /
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+        resources:
+          cpu: 0.25
+          memory: 0.5Gi
+        volumeMounts:
+          - volumeName: zhorten-data
+            mountPath: /data
+    scale:
+      cooldownPeriod: 300
+      maxReplicas: 1
+      minReplicas: 0
+      pollingInterval: 30
+      rules:
+        - name: http-requests
+          http:
+            metadata:
+              concurrentRequests: "80"
+    volumes:
+      - name: zhorten-data
+        storageName: zhorten-data
+        storageType: AzureFile

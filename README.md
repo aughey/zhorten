@@ -285,12 +285,13 @@ deployed shape is one Axum process serving many redirects concurrently.
 
 ## Experimental Container Hosting
 
-Two scale-to-zero container deployment experiments live under `deploy`:
+Three scale-to-zero container deployment experiments live under `deploy`:
 
 - [`deploy/fly`](deploy/fly/README.md) runs the existing sled-backed server on one Fly Machine with a persistent volume mounted at `/data`.
 - [`deploy/google`](deploy/google/README.md) builds the `zhorten-google` binary for Cloud Run and uses Firestore for durable storage.
+- [`deploy/azure`](deploy/azure/README.md) runs the existing sled-backed server on Azure Container Apps with an Azure Files volume mounted at `/data`.
 
-These are side-by-side experiments, not replacements for the EC2 baseline. The Fly deployment should stay single-machine while using sled. The Cloud Run deployment defaults to minimum instances `0`, maximum instances `1`, and concurrency `80` to demonstrate one tiny async server handling many requests.
+These are side-by-side experiments, not replacements for the EC2 baseline. The Fly and Azure Container Apps deployments should stay single-instance while using sled. The Cloud Run deployment defaults to minimum instances `0`, maximum instances `1`, and concurrency `80` to demonstrate one tiny async server handling many requests.
 
 ## AWS EC2 Setup
 
