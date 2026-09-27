@@ -8,7 +8,7 @@ use leptos_router::{
     path,
 };
 use qrcode::{QrCode, render::svg};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use zhorten_core::api::{ApiError, CreateRequest, DashboardData, LinkRecord, LoginRequest};
 
 #[cfg(feature = "csr")]
@@ -16,7 +16,23 @@ use zhorten_core::api::{ApiError, CreateRequest, DashboardData, LinkRecord, Logi
 ///
 /// A 401 is normalized to the sentinel string `"unauthorized"` because the UI
 /// uses that response to switch between the login and dashboard screens.
-async fn api<T: for<'de> Deserialize<'de>>(
+async fn api<T: for<'de> Deserialize<'de>, B: Serialize>(
+    method: &str,
+    path: &str,
+    body: B,
+) -> Result<T, String> {
+    let json = serde_json::to_string(&body).map_err(|e| e.to_string())?;
+    api_raw(method, path, Some(json)).await
+}
+
+#[cfg(feature = "csr")]
+/// Like [`api`], but for requests that send no body.
+async fn api_nobody<T: for<'de> Deserialize<'de>>(method: &str, path: &str) -> Result<T, String> {
+    api_raw(method, path, None).await
+}
+
+#[cfg(feature = "csr")]
+async fn api_raw<T: for<'de> Deserialize<'de>>(
     method: &str,
     path: &str,
     body: Option<String>,
@@ -110,7 +126,7 @@ fn Admin() -> impl IntoView {
         // On page load, try the protected endpoint first. A valid session skips
         // the login form; an expired or missing session lands on the login view.
         leptos::task::spawn_local(async move {
-            match api::<DashboardData>("GET", "/api/links", None).await {
+            match api_nobody::<DashboardData>("GET", "/api/links").await {
                 Ok(value) => {
                     set_data.set(Some(value));
                     set_authenticated.set(true);
@@ -124,9 +140,14 @@ fn Admin() -> impl IntoView {
     #[cfg(not(feature = "csr"))]
     set_loading.set(false);
 
+    let loading = move || !loading.get();
+    let authenticated = move || authenticated.get();
+    let spinner = || view! { <main class="center-shell"><div class="spinner"></div></main> };
+    let login = move || view! { <Login set_authenticated set_data error set_error/> };
+
     view! {
-        <Show when=move || !loading.get() fallback=|| view! { <main class="center-shell"><div class="spinner"></div></main> }>
-            <Show when=move || authenticated.get() fallback=move || view! { <Login set_authenticated set_data error set_error/> }>
+        <Show when=loading fallback=spinner>
+            <Show when=authenticated fallback=login>
                 <Dashboard data set_data set_authenticated error set_error/>
             </Show>
         </Show>
@@ -148,14 +169,11 @@ fn Login(
         ev.prevent_default();
         set_busy.set(true);
         set_error.set(None);
+        let username = username.get();
+        let password = password.get();
         #[cfg(feature = "csr")]
         leptos::task::spawn_local(async move {
-            let body = serde_json::to_string(&LoginRequest {
-                username: username.get(),
-                password: password.get(),
-            })
-            .unwrap();
-            match api::<DashboardData>("POST", "/api/login", Some(body)).await {
+            match api("POST", "/api/login", LoginRequest { username, password }).await {
                 Ok(value) => {
                     set_data.set(Some(value));
                     set_authenticated.set(true);
@@ -203,7 +221,7 @@ fn Dashboard(
     let refresh = move || {
         #[cfg(feature = "csr")]
         leptos::task::spawn_local(async move {
-            match api::<DashboardData>("GET", "/api/links", None).await {
+            match api_nobody::<DashboardData>("GET", "/api/links").await {
                 Ok(value) => set_data.set(Some(value)),
                 Err(e) => set_error.set(Some(e)),
             }
@@ -213,14 +231,11 @@ fn Dashboard(
         ev.prevent_default();
         set_busy.set(true);
         set_error.set(None);
+        let code = code.get();
+        let url = url.get();
         #[cfg(feature = "csr")]
         leptos::task::spawn_local(async move {
-            let body = serde_json::to_string(&CreateRequest {
-                code: code.get(),
-                url: url.get(),
-            })
-            .unwrap();
-            match api::<LinkRecord>("POST", "/api/links", Some(body)).await {
+            match api::<LinkRecord, _>("POST", "/api/links", CreateRequest { code, url }).await {
                 Ok(_) => {
                     set_code.set(String::new());
                     set_url.set(String::new());
@@ -234,7 +249,7 @@ fn Dashboard(
     let logout = move |_| {
         #[cfg(feature = "csr")]
         leptos::task::spawn_local(async move {
-            let _ = api::<serde_json::Value>("POST", "/api/logout", Some("{}".into())).await;
+            let _ = api::<serde_json::Value, _>("POST", "/api/logout", serde_json::json!({})).await;
             set_authenticated.set(false);
             set_data.set(None);
         });
@@ -300,7 +315,7 @@ fn LinkRow(
             }
             leptos::task::spawn_local(async move {
                 let path = format!("/api/links/{code}");
-                match api::<serde_json::Value>("DELETE", &path, None).await {
+                match api_nobody::<serde_json::Value>("DELETE", &path).await {
                     Ok(_) => set_data.update(|state| {
                         if let Some(d) = state {
                             let removed_clicks = d

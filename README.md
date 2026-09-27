@@ -20,10 +20,10 @@ The production instance runs comfortably on AWS's smallest 64-bit Arm EC2 instan
 
 ## Project Layout
 
-- `crates/zhorten-app` is the standalone Leptos CSR application compiled to WebAssembly.
-- `crates/zhorten-core` contains shared datatypes and API shapes used across the workspace.
-- `crates/zhorten-service` contains the transport-agnostic functional API and its validation rules.
-- `crates/zhorten-server` is the Axum API, redirect, authentication, sled storage, and static-file server.
+- [`crates/zhorten-app`](crates/zhorten-app/README.md) is the standalone Leptos CSR application compiled to WebAssembly.
+- [`crates/zhorten-core`](crates/zhorten-core/README.md) contains shared datatypes and API shapes used across the workspace.
+- [`crates/zhorten-service`](crates/zhorten-service/README.md) contains the transport-agnostic functional API and its validation rules.
+- [`crates/zhorten-server`](crates/zhorten-server/README.md) is the Axum API, redirect, authentication, sled storage, and static-file server.
 - `public` contains the HTML shell and source assets copied into the browser bundle.
 
 The browser and server are separate build artifacts. A normal Cargo build does not run `wasm-bindgen` or assemble the static site directory.
