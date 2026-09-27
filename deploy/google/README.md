@@ -37,7 +37,7 @@ gcloud run deploy zhorten \
   --min-instances 0 \
   --max-instances 1 \
   --concurrency 80 \
-  --set-env-vars ZHORTEN_USERNAME=admin,ZHORTEN_GOOGLE_PROJECT=$GOOGLE_CLOUD_PROJECT,ZHORTEN_FIRESTORE_COLLECTION=links,ZHORTEN_SECURE_COOKIES=true \
+  --set-env-vars ZHORTEN_USERNAME=admin,ZHORTEN_ADDR=0.0.0.0:8080,ZHORTEN_SITE_ROOT=/app/site,ZHORTEN_GOOGLE_PROJECT=$GOOGLE_CLOUD_PROJECT,ZHORTEN_FIRESTORE_COLLECTION=links,ZHORTEN_SECURE_COOKIES=true \
   --set-secrets ZHORTEN_PASSWORD=zhorten-password:latest \
   --allow-unauthenticated
 ```

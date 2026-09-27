@@ -39,8 +39,13 @@ No link validation or business policy should be reimplemented in handlers. The s
 The server expects an assembled site directory containing `index.html` and browser assets:
 
 ```bash
+ZHORTEN_USERNAME=admin \
 ZHORTEN_PASSWORD='choose-a-long-random-password' \
+ZHORTEN_ADDR='127.0.0.1:3000' \
+ZHORTEN_DB='./data/zhorten.db' \
+ZHORTEN_CACHE_CAPACITY=67108864 \
 ZHORTEN_SITE_ROOT='./target/site' \
+ZHORTEN_SECURE_COOKIES=false \
 cargo run --package zhorten-server --bin zhorten
 ```
 

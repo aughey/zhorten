@@ -22,7 +22,11 @@ The supplied [`fly.toml`](fly.toml) configures:
 - `auto_stop_machines = "stop"`, so Fly can stop the Machine after it is idle.
 - `min_machines_running = 0`, so the app can scale all the way down.
 - One volume named `zhorten_data`, mounted at `/data`.
+- `ZHORTEN_USERNAME=admin`, the non-secret administrator username.
+- `ZHORTEN_ADDR=0.0.0.0:3000`, the explicit listener inside the container.
 - `ZHORTEN_DB=/data/zhorten.db`, so sled stores durable state on the volume.
+- `ZHORTEN_CACHE_CAPACITY=67108864`, so the sled cache size is explicit.
+- `ZHORTEN_SITE_ROOT=/app/site`, the static browser bundle path in the image.
 - `ZHORTEN_SECURE_COOKIES=true`, because the public app is served through HTTPS.
 
 The root `Dockerfile` is used unchanged. It builds the Leptos browser bundle,
@@ -67,10 +71,7 @@ Set the admin credentials as Fly secrets. These are not committed into
 `fly.toml`.
 
 ```bash
-fly secrets set \
-  ZHORTEN_USERNAME=admin \
-  ZHORTEN_PASSWORD='choose-a-long-random-password' \
-  --app zhorten
+fly secrets set ZHORTEN_PASSWORD='choose-a-long-random-password' --app zhorten
 ```
 
 Optional MCP support uses the same environment variables as the baseline server:
@@ -159,13 +160,12 @@ minimum running Machines.
 
 The checked-in `fly.toml` keeps deploy-time configuration in three places:
 
-- Non-secret runtime defaults in `[env]`.
+- Explicit non-secret runtime configuration in `[env]`.
 - The durable volume mount in `[[mounts]]`.
 - Proxy and scale-to-zero behavior in `[http_service]`.
 
 Secrets belong in Fly secrets:
 
-- `ZHORTEN_USERNAME`
 - `ZHORTEN_PASSWORD`
 - optional `ZHORTEN_MCP`
 - optional `ZHORTEN_MCP_HOST`

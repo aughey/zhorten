@@ -102,25 +102,25 @@ Start the server:
 export ZHORTEN_USERNAME=admin
 export ZHORTEN_PASSWORD='choose-a-long-random-password'
 export ZHORTEN_DB='./data/zhorten.db'
-export ZHORTEN_SITE_ROOT='./target/site'
+export ZHORTEN_ADDR='127.0.0.1:3000'
 ./target/release/zhorten
 ```
 
 Open <http://127.0.0.1:3000/admin>. Rebuild the WASM bundle after changing `zhorten-app`, rebuild the executable after changing `zhorten-server`, and recopy `public` files after changing static assets.
 
-The command-line options are also available through environment variables:
+The command-line options are also available through environment variables. The listener address and database path are intentionally explicit; cache size, site root, and cookie security have deployment-shaped defaults.
 
 | Option | Environment variable | Default |
 | --- | --- | --- |
-| `--username` | `ZHORTEN_USERNAME` | `admin` |
+| `--username` | `ZHORTEN_USERNAME` | Required |
 | `--password` | `ZHORTEN_PASSWORD` | Required |
-| `--database` | `ZHORTEN_DB` | `./data/zhorten.db` |
+| `--database` | `ZHORTEN_DB` | Required |
+| `--address` | `ZHORTEN_ADDR` | Required |
 | `--cache-capacity` | `ZHORTEN_CACHE_CAPACITY` | `67108864` (64 MiB) |
-| `--address` | `ZHORTEN_ADDR` | `127.0.0.1:3000` |
-| `--site-root` | `ZHORTEN_SITE_ROOT` | `./target/site` |
+| `--site-root` | `ZHORTEN_SITE_ROOT` | `./target/site` for `zhorten`, `/app/site` for deployment binaries |
+| `--secure-cookies true|false` | `ZHORTEN_SECURE_COOKIES` | `false` for `zhorten`, `true` for deployment binaries |
 | `--mcp` | `ZHORTEN_MCP` | Disabled |
 | `--mcp-host` | `ZHORTEN_MCP_HOST` | Loopback hosts only |
-| `--secure-cookies` | `ZHORTEN_SECURE_COOKIES` | `false` |
 
 The password is supplied at startup, converted to an Argon2 hash, and never written to the database. Authentication is managed by `axum-login` with a `tower-sessions` in-memory store. Sessions end when their one-day cookie expires or the service restarts.
 
@@ -144,11 +144,11 @@ Commands:
 - `follow <code>` resolves the short code, records a click, and prints the destination URL.
 - `delete <code>` or `remove <code>` deletes a short link and treats missing links as a successful no-op.
 
-The CLI accepts the sled storage flags used by the server:
+The CLI accepts the sled storage flags used by the server. The database path is explicit; cache capacity defaults to 64 MiB.
 
 | Option | Environment variable | Default |
 | --- | --- | --- |
-| `--database` | `ZHORTEN_DB` | `./data/zhorten.db` |
+| `--database` | `ZHORTEN_DB` | Required |
 | `--cache-capacity` | `ZHORTEN_CACHE_CAPACITY` | `67108864` (64 MiB) |
 
 ## MCP
@@ -196,6 +196,11 @@ docker run -d \
   -p 80:3000 \
   -e ZHORTEN_USERNAME=admin \
   -e ZHORTEN_PASSWORD='choose-a-long-random-password' \
+  -e ZHORTEN_ADDR=0.0.0.0:3000 \
+  -e ZHORTEN_DB=/data/zhorten.db \
+  -e ZHORTEN_CACHE_CAPACITY=67108864 \
+  -e ZHORTEN_SITE_ROOT=/app/site \
+  -e ZHORTEN_SECURE_COOKIES=false \
   -v zhorten-data:/data \
   ghcr.io/aughey/zhorten:latest
 ```
@@ -221,7 +226,13 @@ docker run -d \
   --name zhorten \
   --restart unless-stopped \
   -p 80:3000 \
+  -e ZHORTEN_USERNAME=admin \
   -e ZHORTEN_PASSWORD='choose-a-long-random-password' \
+  -e ZHORTEN_ADDR=0.0.0.0:3000 \
+  -e ZHORTEN_DB=/data/zhorten.db \
+  -e ZHORTEN_CACHE_CAPACITY=67108864 \
+  -e ZHORTEN_SITE_ROOT=/app/site \
+  -e ZHORTEN_SECURE_COOKIES=false \
   -v "$PWD/zhorten-data:/data" \
   ghcr.io/aughey/zhorten:latest
 ```
@@ -305,7 +316,10 @@ umask 077
 cat > /home/ec2-user/zhorten/zhorten.env <<'EOF'
 ZHORTEN_USERNAME=admin
 ZHORTEN_PASSWORD=replace-with-a-long-random-password
+ZHORTEN_ADDR=0.0.0.0:3000
+ZHORTEN_DB=/data/zhorten.db
 ZHORTEN_CACHE_CAPACITY=67108864
+ZHORTEN_SITE_ROOT=/app/site
 ZHORTEN_SECURE_COOKIES=false
 RUST_LOG=info
 EOF

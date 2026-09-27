@@ -10,7 +10,7 @@ async fn main() {
         .init();
 
     let args = StandaloneSledArgs::parse();
-    let address = args.address();
+    let address = args.server.address;
     if args.server.healthcheck {
         std::process::exit(if healthy(address) { 0 } else { 1 });
     }
@@ -21,10 +21,9 @@ async fn main() {
         exit_with_config_error(message);
     }
 
-    let database_path = args.database();
     let site_root = args.site_root();
     let secure_cookies = args.secure_cookies();
-    let database = Database::open(database_path, args.sled.cache_capacity)
+    let database = Database::open(args.sled.database, args.sled.cache_capacity)
         .expect("unable to open sled database");
     let app = sled_router(
         database,

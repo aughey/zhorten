@@ -5,7 +5,7 @@ use zhorten_sled::Database;
 #[tokio::main]
 async fn main() {
     let args = CliSledArgs::parse();
-    let database = Database::open(args.database(), args.sled.cache_capacity)
+    let database = Database::open(args.sled.database, args.sled.cache_capacity)
         .expect("unable to open sled database");
 
     let result = match args.action {

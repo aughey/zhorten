@@ -2,8 +2,10 @@ app = "zhorten"
 primary_region = "ord"
 
 [env]
+  ZHORTEN_USERNAME = "admin"
   ZHORTEN_ADDR = "0.0.0.0:3000"
   ZHORTEN_DB = "/data/zhorten.db"
+  ZHORTEN_CACHE_CAPACITY = "67108864"
   ZHORTEN_SITE_ROOT = "/app/site"
   ZHORTEN_SECURE_COOKIES = "true"
 

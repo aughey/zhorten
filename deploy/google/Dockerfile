@@ -30,8 +30,6 @@ COPY --from=builder --chown=10001:10001 /output/site /app/site
 
 USER 10001:10001
 WORKDIR /app
-ENV ZHORTEN_SITE_ROOT=/app/site \
-    ZHORTEN_SECURE_COOKIES=true
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD ["/app/zhorten-google", "--healthcheck"]

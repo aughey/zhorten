@@ -16,6 +16,10 @@ spec:
           env:
             - name: ZHORTEN_USERNAME
               value: admin
+            - name: ZHORTEN_ADDR
+              value: 0.0.0.0:8080
+            - name: ZHORTEN_SITE_ROOT
+              value: /app/site
             - name: ZHORTEN_PASSWORD
               valueFrom:
                 secretKeyRef:

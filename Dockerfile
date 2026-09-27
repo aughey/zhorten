@@ -32,10 +32,6 @@ COPY --from=builder --chown=10001:10001 /output/data /data
 
 USER 10001:10001
 WORKDIR /app
-ENV ZHORTEN_ADDR=0.0.0.0:3000 \
-    ZHORTEN_DB=/data/zhorten.db \
-    ZHORTEN_CACHE_CAPACITY=67108864 \
-    ZHORTEN_SITE_ROOT=/app/site
 VOLUME ["/data"]
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \

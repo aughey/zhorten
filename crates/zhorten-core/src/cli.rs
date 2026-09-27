@@ -1,34 +1,23 @@
-use std::{
-    env,
-    net::{Ipv4Addr, SocketAddr},
-    path::PathBuf,
-};
+use std::{net::SocketAddr, path::PathBuf};
 
 pub use clap::Parser;
-use clap::{Args, Subcommand, ValueHint};
-
-pub const DEFAULT_FIRESTORE_COLLECTION: &str = "links";
+use clap::{ArgAction, Args, Subcommand, ValueHint};
 
 #[derive(Args)]
 pub struct ServerArgs {
-    #[arg(long, env = "ZHORTEN_USERNAME", default_value = "admin")]
+    #[arg(long, env = "ZHORTEN_USERNAME")]
     pub username: String,
     #[arg(long, env = "ZHORTEN_PASSWORD", hide_env_values = true)]
     pub password: String,
     #[arg(long, env = "ZHORTEN_ADDR")]
-    pub address: Option<SocketAddr>,
+    pub address: SocketAddr,
     #[arg(long, env = "ZHORTEN_SITE_ROOT", value_hint = ValueHint::DirPath)]
     pub site_root: Option<PathBuf>,
     /// Add the Secure attribute to session cookies.
     ///
-    /// Enable this when zhorten is served through HTTPS. Leave it disabled for
-    /// plain HTTP local development, where browsers will reject Secure cookies.
-    #[arg(
-        long,
-        env = "ZHORTEN_SECURE_COOKIES",
-        num_args = 0..=1,
-        default_missing_value = "true"
-    )]
+    /// Enable this when zhorten is served through HTTPS. Set it explicitly to
+    /// false for plain HTTP local development, where browsers reject Secure cookies.
+    #[arg(long, env = "ZHORTEN_SECURE_COOKIES", action = ArgAction::Set)]
     pub secure_cookies: Option<bool>,
     #[arg(long, hide = true)]
     pub healthcheck: bool,
@@ -37,7 +26,7 @@ pub struct ServerArgs {
 #[derive(Args)]
 pub struct SledArgs {
     #[arg(long, env = "ZHORTEN_DB", value_hint = ValueHint::AnyPath)]
-    pub database: Option<String>,
+    pub database: String,
     #[arg(long, env = "ZHORTEN_CACHE_CAPACITY", default_value_t = 64 * 1024 * 1024)]
     pub cache_capacity: u64,
 }
@@ -122,24 +111,12 @@ pub struct GoogleCloudRunArgs {
     #[command(flatten)]
     pub server: ServerArgs,
     #[arg(long, env = "ZHORTEN_GOOGLE_PROJECT")]
-    pub google_project: Option<String>,
-    #[arg(
-        long,
-        env = "ZHORTEN_FIRESTORE_COLLECTION",
-        default_value = DEFAULT_FIRESTORE_COLLECTION
-    )]
+    pub google_project: String,
+    #[arg(long, env = "ZHORTEN_FIRESTORE_COLLECTION")]
     pub firestore_collection: String,
-    #[arg(long, env = "PORT")]
-    pub port: Option<u16>,
 }
 
 impl StandaloneSledArgs {
-    pub fn address(&self) -> SocketAddr {
-        self.server
-            .address
-            .unwrap_or_else(|| "127.0.0.1:3000".parse().expect("default address"))
-    }
-
     pub fn site_root(&self) -> PathBuf {
         self.server
             .site_root
@@ -150,22 +127,9 @@ impl StandaloneSledArgs {
     pub fn secure_cookies(&self) -> bool {
         self.server.secure_cookies.unwrap_or(false)
     }
-
-    pub fn database(&self) -> String {
-        self.sled
-            .database
-            .clone()
-            .unwrap_or_else(|| "./data/zhorten.db".into())
-    }
 }
 
 impl FlySledArgs {
-    pub fn address(&self) -> SocketAddr {
-        self.server
-            .address
-            .unwrap_or_else(|| "0.0.0.0:3000".parse().expect("default address"))
-    }
-
     pub fn site_root(&self) -> PathBuf {
         self.server
             .site_root
@@ -175,32 +139,10 @@ impl FlySledArgs {
 
     pub fn secure_cookies(&self) -> bool {
         self.server.secure_cookies.unwrap_or(true)
-    }
-
-    pub fn database(&self) -> String {
-        self.sled
-            .database
-            .clone()
-            .unwrap_or_else(|| "/data/zhorten.db".into())
-    }
-}
-
-impl CliSledArgs {
-    pub fn database(&self) -> String {
-        self.sled
-            .database
-            .clone()
-            .unwrap_or_else(|| "./data/zhorten.db".into())
     }
 }
 
 impl GoogleCloudRunArgs {
-    pub fn address(&self) -> SocketAddr {
-        self.server
-            .address
-            .unwrap_or_else(|| SocketAddr::from((Ipv4Addr::UNSPECIFIED, self.port.unwrap_or(3000))))
-    }
-
     pub fn site_root(&self) -> PathBuf {
         self.server
             .site_root
@@ -210,12 +152,6 @@ impl GoogleCloudRunArgs {
 
     pub fn secure_cookies(&self) -> bool {
         self.server.secure_cookies.unwrap_or(true)
-    }
-
-    pub fn project_id(&self) -> Option<String> {
-        self.google_project
-            .clone()
-            .or_else(default_google_project_id)
     }
 }
 
@@ -239,33 +175,31 @@ pub fn validate_mcp(mcp: &McpArgs) -> Result<(), &'static str> {
     }
 }
 
-fn default_google_project_id() -> Option<String> {
-    env::var("GOOGLE_CLOUD_PROJECT")
-        .or_else(|_| env::var("GCP_PROJECT"))
-        .ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn cloud_run_port_sets_listener_address() {
+    fn server_args_carry_explicit_listener_address() {
         let args = GoogleCloudRunArgs {
             server: ServerArgs {
                 username: "admin".into(),
                 password: "password".into(),
-                address: None,
+                address: SocketAddr::from(([127, 0, 0, 1], 8080)),
                 site_root: None,
                 secure_cookies: None,
                 healthcheck: false,
             },
-            google_project: None,
-            firestore_collection: DEFAULT_FIRESTORE_COLLECTION.into(),
-            port: Some(8080),
+            google_project: "example-project".into(),
+            firestore_collection: "links".into(),
         };
 
-        assert_eq!(args.address(), SocketAddr::from(([0, 0, 0, 0], 8080)));
+        assert_eq!(
+            args.server.address,
+            SocketAddr::from(([127, 0, 0, 1], 8080))
+        );
+        assert_eq!(args.site_root(), PathBuf::from("/app/site"));
+        assert!(args.secure_cookies());
     }
 
     #[test]
