@@ -4540,17 +4540,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zhorten-fly"
-version = "0.1.0"
-dependencies = [
- "tokio",
- "tracing-subscriber",
- "zhorten-core",
- "zhorten-database",
- "zhorten-server",
-]
-
-[[package]]
 name = "zhorten-google"
 version = "0.1.0"
 dependencies = [

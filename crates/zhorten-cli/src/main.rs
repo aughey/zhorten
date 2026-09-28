@@ -1,11 +1,11 @@
 use std::time::{SystemTime, UNIX_EPOCH};
-use zhorten_core::cli::{CliAction, CliSledArgs, Parser};
+use zhorten_core::cli::{CliAction, CliArgs, Parser};
 use zhorten_database::SharedDatabase;
 use zhorten_service::ClickContext;
 
 #[tokio::main]
 async fn main() {
-    let args = CliSledArgs::parse();
+    let args = CliArgs::parse();
     let database = zhorten_database::open(&args.database).expect("unable to open database");
 
     let result = match args.action {

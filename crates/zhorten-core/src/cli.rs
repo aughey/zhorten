@@ -80,18 +80,7 @@ pub struct McpArgs {
 
 #[derive(Parser)]
 #[command(version, about = "A tiny self-hosted URL shortener")]
-pub struct StandaloneSledArgs {
-    #[command(flatten)]
-    pub server: ServerArgs,
-    #[command(flatten)]
-    pub database: DatabaseArgs,
-    #[command(flatten)]
-    pub mcp: McpArgs,
-}
-
-#[derive(Parser)]
-#[command(version, about = "Fly.io deployment wrapper for zhorten")]
-pub struct FlySledArgs {
+pub struct StandaloneArgs {
     #[command(flatten)]
     pub server: ServerArgs,
     #[command(flatten)]
@@ -105,7 +94,7 @@ pub struct FlySledArgs {
     version,
     about = "Run one zhorten service operation without starting a web server"
 )]
-pub struct CliSledArgs {
+pub struct CliArgs {
     #[command(flatten)]
     pub database: DatabaseArgs,
     #[command(subcommand)]
@@ -148,7 +137,7 @@ pub struct GoogleCloudRunArgs {
     pub firestore_collection: String,
 }
 
-impl StandaloneSledArgs {
+impl StandaloneArgs {
     pub fn site_root(&self) -> PathBuf {
         self.server
             .site_root
@@ -158,19 +147,6 @@ impl StandaloneSledArgs {
 
     pub fn secure_cookies(&self) -> bool {
         self.server.secure_cookies.unwrap_or(false)
-    }
-}
-
-impl FlySledArgs {
-    pub fn site_root(&self) -> PathBuf {
-        self.server
-            .site_root
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("/app/site"))
-    }
-
-    pub fn secure_cookies(&self) -> bool {
-        self.server.secure_cookies.unwrap_or(true)
     }
 }
 

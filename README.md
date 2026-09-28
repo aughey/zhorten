@@ -28,7 +28,6 @@ The production instance runs comfortably on AWS's smallest 64-bit Arm EC2 instan
 - [`crates/zhorten-sled`](crates/zhorten-sled) is the sled-backed implementation of the service database trait.
 - [`crates/zhorten-sqlite`](crates/zhorten-sqlite) is the SQLite-backed implementation of the service database trait.
 - [`crates/zhorten-server`](crates/zhorten-server/README.md) is the Axum API, redirect, authentication, storage factory, and static-file server.
-- [`crates/zhorten-fly`](crates/zhorten-fly) is a Fly.io wrapper around the local-database server with Fly-friendly defaults.
 - [`crates/zhorten-google`](crates/zhorten-google) is a Cloud Run wrapper that stores links in Firestore.
 - `public` contains the HTML shell and source assets copied into the browser bundle.
 
@@ -44,7 +43,7 @@ zhorten is organized as a small workspace with narrow boundaries:
 - `zhorten-database` is the local storage factory. It accepts configuration, opens sled or SQLite, and returns a shared database trait object to executable entry points.
 - `zhorten-server` is an Axum adapter around the service layer. It owns HTTP routing, request extraction, response/status-code mapping, sessions, security headers, static-file serving, and command-line configuration. It should not contain app logic.
 - `zhorten-cli` is a command-line adapter around the service layer. It starts no web server; each process performs one requested service operation and exits.
-- `zhorten-fly` and `zhorten-google` are deployment-specific binaries. They choose platform defaults and storage adapters, then start the shared server.
+- `zhorten-google` is a deployment-specific binary. It chooses Cloud Run defaults and the Firestore storage adapter, then starts the shared server.
 - `zhorten-app` is the Leptos browser UI. It is client-side rendered, compiled to WebAssembly with the `csr` feature, and calls the server's same-origin JSON API using the shared shapes from `zhorten-core`.
 
 The dependency direction is intentionally simple:
@@ -71,6 +70,46 @@ rustup override set nightly
 rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.128 --locked --force
 ```
+
+### Local development
+
+Build the debug browser bundle and assemble the static site:
+
+```bash
+mkdir -p target/site/assets/pkg
+
+cargo build --package zhorten-app --lib \
+  --target-dir target/front \
+  --target wasm32-unknown-unknown \
+  --no-default-features \
+  --features csr
+
+wasm-bindgen \
+  --target web \
+  --out-dir target/site/assets/pkg \
+  --out-name zhorten_app \
+  target/front/wasm32-unknown-unknown/debug/zhorten_app.wasm
+
+cp public/index.html target/site/
+cp -R public/assets/. target/site/assets/
+```
+
+Run the development server against that site bundle:
+
+```bash
+cargo run --package zhorten-server --bin zhorten -- \
+  --password bar \
+  --username foo \
+  --database /tmp/dev.db \
+  --site-root ./target/site \
+  --address 127.0.0.1:3000
+```
+
+Open <http://127.0.0.1:3000/admin>. Rebuild the browser bundle after changing
+`zhorten-app`; the development server is rebuilt automatically each time
+`cargo run` starts.
+
+### Release build
 
 Build the browser bundle, assemble `target/site`, and build the server:
 
@@ -123,8 +162,8 @@ The command-line options are also available through environment variables. The l
 | `--analytics disabled|enabled` | `ZHORTEN_ANALYTICS` | `disabled` |
 | `--address` | `ZHORTEN_ADDR` | Required |
 | `--cache-capacity` | `ZHORTEN_CACHE_CAPACITY` | `67108864` (64 MiB, sled only) |
-| `--site-root` | `ZHORTEN_SITE_ROOT` | `./target/site` for `zhorten`, `/app/site` for deployment binaries |
-| `--secure-cookies true|false` | `ZHORTEN_SECURE_COOKIES` | `false` for `zhorten`, `true` for deployment binaries |
+| `--site-root` | `ZHORTEN_SITE_ROOT` | `./target/site` for `zhorten`, `/app/site` for the Cloud Run binary |
+| `--secure-cookies true|false` | `ZHORTEN_SECURE_COOKIES` | `false` for `zhorten`, `true` for the Cloud Run binary |
 | `--mcp` | `ZHORTEN_MCP` | Disabled |
 | `--mcp-host` | `ZHORTEN_MCP_HOST` | Loopback hosts only |
 
@@ -247,10 +286,10 @@ docker run -d \
 
 ## Redirect Benchmark
 
-The server crate includes a focused benchmark for public redirect throughput on
-the sled-backed Axum server. It starts the real router on a local TCP listener,
-seeds one short link, and repeatedly requests `GET /bench` over HTTP/1.1
-keep-alive connections.
+The server crate includes a focused benchmark for public redirect throughput.
+By default it runs sled and SQLite against both the real Axum router over local
+HTTP/1.1 keep-alive connections and the raw `zhorten_service` redirect path.
+Each scenario seeds one short link and repeatedly follows `/bench`.
 
 ```bash
 cargo bench --package zhorten-server --bench redirect_throughput
@@ -261,27 +300,51 @@ The benchmark can be tuned with:
 | Environment variable | Default | Meaning |
 | --- | --- | --- |
 | `ZHORTEN_REDIRECT_BENCH_SECONDS` | `10` | Measurement duration |
-| `ZHORTEN_REDIRECT_BENCH_CONCURRENCY` | `64` | Concurrent keep-alive client connections |
+| `ZHORTEN_REDIRECT_BENCH_CONCURRENCY` | `64` | Concurrent client connections or service workers |
+| `ZHORTEN_REDIRECT_BENCH_BACKEND` | `all` | `sled`, `sqlite`, or `all` |
+| `ZHORTEN_REDIRECT_BENCH_LAYER` | `all` | `axum`, `service`, or `all` |
 | `ZHORTEN_REDIRECT_BENCH_CACHE_CAPACITY` | `67108864` | sled cache capacity in bytes |
 
-One local short run on this branch:
+One local run on this branch using the defaults:
 
 ```text
-ZHORTEN_REDIRECT_BENCH_SECONDS=2 ZHORTEN_REDIRECT_BENCH_CONCURRENCY=16 cargo bench --package zhorten-server --bench redirect_throughput
+$ cargo bench --package zhorten-server --bench redirect_throughput
 
 redirect benchmark
   route: /bench
+  concurrency: 64
+  requested duration: 10s
+
   storage: sled
-  server: axum over TCP keep-alive
-  concurrency: 16
-  duration: 2.000s
-  requests: 72351
-  throughput: 36166.71 req/s
+  layer: axum over TCP keep-alive
+  duration: 10.003s
+  requests: 438651
+  throughput: 43850.50 req/s
+
+  storage: sled
+  layer: raw zhorten_service layer
+  duration: 10.005s
+  requests: 3113626
+  throughput: 311210.81 req/s
+
+  storage: sqlite
+  layer: axum over TCP keep-alive
+  duration: 10.002s
+  requests: 71706
+  throughput: 7168.89 req/s
+
+  storage: sqlite
+  layer: raw zhorten_service layer
+  duration: 10.002s
+  requests: 99908
+  throughput: 9988.63 req/s
 ```
 
-Treat the number as local-machine throughput, not a platform guarantee. It is
-useful for comparing changes to the redirect path and for showing that the
-deployed shape is one Axum process serving many redirects concurrently.
+Treat these numbers as local-machine throughput, not a platform guarantee. They
+are useful for comparing changes to the redirect path and for showing that the
+deployed shape is one Axum process serving many redirects concurrently. Use
+`ZHORTEN_REDIRECT_BENCH_LAYER=service` when you want to exclude the Axum web
+stack and measure the transport-agnostic service layer directly.
 
 ## Experimental Container Hosting
 

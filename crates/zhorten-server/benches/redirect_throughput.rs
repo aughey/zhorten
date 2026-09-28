@@ -24,16 +24,64 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let duration = env_duration("ZHORTEN_REDIRECT_BENCH_SECONDS", 10);
     let concurrency = env_usize("ZHORTEN_REDIRECT_BENCH_CONCURRENCY", 64);
     let cache_capacity = env_u64("ZHORTEN_REDIRECT_BENCH_CACHE_CAPACITY", 64 * 1024 * 1024);
+    let backends = env_backends("ZHORTEN_REDIRECT_BENCH_BACKEND")?;
+    let layers = env_layers("ZHORTEN_REDIRECT_BENCH_LAYER")?;
 
+    println!("redirect benchmark");
+    println!("  route: /{CODE}");
+    println!("  concurrency: {concurrency}");
+    println!("  requested duration: {}s", duration.as_secs());
+
+    for backend in backends {
+        for layer in &layers {
+            let result =
+                run_benchmark(backend, *layer, duration, concurrency, cache_capacity).await?;
+            println!();
+            println!("  storage: {}", backend_name(backend));
+            println!("  layer: {}", layer.name());
+            println!("  duration: {:.3}s", result.elapsed.as_secs_f64());
+            println!("  requests: {}", result.requests);
+            println!("  throughput: {:.2} req/s", result.requests_per_second());
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_benchmark(
+    backend: DatabaseBackend,
+    layer: BenchLayer,
+    duration: Duration,
+    concurrency: usize,
+    cache_capacity: u64,
+) -> Result<BenchResult, Box<dyn std::error::Error>> {
     let temp = TempDir::new("zhorten-redirect-bench")?;
     let config = DatabaseArgs {
-        backend: DatabaseBackend::Sled,
-        database: temp.path().join("zhorten.db").display().to_string(),
+        backend,
+        database: temp
+            .path()
+            .join(database_name(backend))
+            .display()
+            .to_string(),
         analytics: AnalyticsMode::Disabled,
         cache_capacity,
     };
     let database = zhorten_database::open(&config)?;
     seed_link(&database).await?;
+
+    match layer {
+        BenchLayer::Axum => run_axum_benchmark(temp, database, duration, concurrency).await,
+        BenchLayer::Service => run_service_benchmark(database, duration, concurrency).await,
+    }
+}
+
+async fn run_axum_benchmark(
+    temp: TempDir,
+    database: SharedDatabase,
+    duration: Duration,
+    concurrency: usize,
+) -> Result<BenchResult, Box<dyn std::error::Error>> {
+    write_site_root(&temp.path().join("site"))?;
 
     let app = local_router(
         database,
@@ -48,7 +96,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             mcp_hosts: Vec::new(),
         },
     );
-    write_site_root(&temp.path().join("site"))?;
 
     let listener = TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await?;
     let address = listener.local_addr()?;
@@ -81,17 +128,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     server.abort();
 
     let requests = total.load(Ordering::Relaxed);
-    let rps = requests as f64 / elapsed.as_secs_f64();
-    println!("redirect benchmark");
-    println!("  route: /{CODE}");
-    println!("  storage: sled");
-    println!("  server: axum over TCP keep-alive");
-    println!("  concurrency: {concurrency}");
-    println!("  duration: {:.3}s", elapsed.as_secs_f64());
-    println!("  requests: {requests}");
-    println!("  throughput: {rps:.2} req/s");
+    Ok(BenchResult { elapsed, requests })
+}
 
-    Ok(())
+async fn run_service_benchmark(
+    database: SharedDatabase,
+    duration: Duration,
+    concurrency: usize,
+) -> Result<BenchResult, Box<dyn std::error::Error>> {
+    warm_up_service(&database).await?;
+
+    let deadline = Instant::now() + duration;
+    let total = Arc::new(AtomicU64::new(0));
+    let started = Instant::now();
+    let mut workers = Vec::with_capacity(concurrency);
+    for _ in 0..concurrency {
+        let database = Arc::clone(&database);
+        let total = Arc::clone(&total);
+        workers.push(tokio::spawn(async move {
+            run_service_worker(database, deadline, total).await
+        }));
+    }
+
+    for worker in workers {
+        worker.await??;
+    }
+    let elapsed = started.elapsed();
+    let requests = total.load(Ordering::Relaxed);
+    Ok(BenchResult { elapsed, requests })
 }
 
 async fn seed_link(database: &SharedDatabase) -> Result<(), Box<dyn std::error::Error>> {
@@ -110,6 +174,11 @@ async fn warm_up(address: SocketAddr) -> io::Result<()> {
     Ok(())
 }
 
+async fn warm_up_service(database: &SharedDatabase) -> io::Result<()> {
+    follow_service(database).await?;
+    Ok(())
+}
+
 async fn run_worker(
     address: SocketAddr,
     deadline: Instant,
@@ -119,6 +188,20 @@ async fn run_worker(
     let mut completed = 0;
     while Instant::now() < deadline {
         request_redirect(&mut stream).await?;
+        completed += 1;
+    }
+    total.fetch_add(completed, Ordering::Relaxed);
+    Ok(())
+}
+
+async fn run_service_worker(
+    database: SharedDatabase,
+    deadline: Instant,
+    total: Arc<AtomicU64>,
+) -> io::Result<()> {
+    let mut completed = 0;
+    while Instant::now() < deadline {
+        follow_service(&database).await?;
         completed += 1;
     }
     total.fetch_add(completed, Ordering::Relaxed);
@@ -140,6 +223,25 @@ async fn request_redirect(stream: &mut TcpStream) -> io::Result<()> {
         return Err(io::Error::other(format!(
             "unexpected response: {}",
             String::from_utf8_lossy(&response)
+        )));
+    }
+    Ok(())
+}
+
+async fn follow_service(database: &SharedDatabase) -> io::Result<()> {
+    let url = zhorten_service::follow_link(
+        database,
+        CODE.to_owned(),
+        zhorten_service::ClickContext::new(0),
+    )
+    .await
+    .map_err(|error| match error {
+        zhorten_service::FollowLinkError::Database(error) => io::Error::other(error),
+        other => io::Error::other(format!("follow failed: {other:?}")),
+    })?;
+    if url != TARGET_URL {
+        return Err(io::Error::other(format!(
+            "unexpected redirect target: {url}"
         )));
     }
     Ok(())
@@ -170,6 +272,70 @@ fn env_u64(name: &str, default: u64) -> u64 {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(default)
+}
+
+fn env_backends(name: &str) -> io::Result<Vec<DatabaseBackend>> {
+    match env::var(name).as_deref() {
+        Ok("sled") => Ok(vec![DatabaseBackend::Sled]),
+        Ok("sqlite") => Ok(vec![DatabaseBackend::Sqlite]),
+        Ok("all") | Err(_) => Ok(vec![DatabaseBackend::Sled, DatabaseBackend::Sqlite]),
+        Ok(value) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{name} must be sled, sqlite, or all; got {value}"),
+        )),
+    }
+}
+
+fn env_layers(name: &str) -> io::Result<Vec<BenchLayer>> {
+    match env::var(name).as_deref() {
+        Ok("axum") => Ok(vec![BenchLayer::Axum]),
+        Ok("service") => Ok(vec![BenchLayer::Service]),
+        Ok("all") | Err(_) => Ok(vec![BenchLayer::Axum, BenchLayer::Service]),
+        Ok(value) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("{name} must be axum, service, or all; got {value}"),
+        )),
+    }
+}
+
+fn backend_name(backend: DatabaseBackend) -> &'static str {
+    match backend {
+        DatabaseBackend::Sled => "sled",
+        DatabaseBackend::Sqlite => "sqlite",
+    }
+}
+
+fn database_name(backend: DatabaseBackend) -> &'static str {
+    match backend {
+        DatabaseBackend::Sled => "zhorten-sled.db",
+        DatabaseBackend::Sqlite => "zhorten-sqlite.db",
+    }
+}
+
+#[derive(Clone, Copy)]
+enum BenchLayer {
+    Axum,
+    Service,
+}
+
+impl BenchLayer {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Axum => "axum over TCP keep-alive",
+            Self::Service => "raw zhorten_service layer",
+        }
+    }
+}
+
+struct BenchResult {
+    elapsed: Duration,
+    requests: u64,
+}
+
+impl BenchResult {
+    fn requests_per_second(&self) -> f64 {
+        self.requests as f64 / self.elapsed.as_secs_f64()
+    }
 }
 
 struct TempDir {

@@ -97,26 +97,27 @@ The repository should support three side-by-side deployment stories:
 
 ## Proposed Repository Changes
 
-Add deployment-specific crates while preserving the existing crate boundaries.
+Add deployment-specific code only where the platform needs distinct runtime
+behavior, while preserving the existing crate boundaries.
 
-Suggested new crates:
+Current deployment-specific crate:
 
-- `crates/zhorten-fly`
 - `crates/zhorten-google`
 
-The exact naming can change, but the intent should stay clear:
+The intent should stay clear:
 
-- `zhorten-fly` owns Fly.io-specific startup/config/deployment wiring.
 - `zhorten-google` owns Google Cloud Run-specific startup/config and Google
   storage integration.
+- Fly.io uses the normal `zhorten` server binary with deployment settings in
+  `deploy/fly/fly.toml`.
 
 There are two reasonable implementation styles:
 
-1. **Thin deployment binaries**
+1. **Thin deployment binaries when needed**
    - Keep shared Axum route construction in `zhorten-server`.
    - Move reusable server assembly code out of `main.rs` if needed.
-   - Each deployment crate provides a small binary that chooses configuration and
-     database implementation, then starts the shared server.
+   - Each deployment crate provides a small binary only when it needs distinct
+     configuration or database implementation, then starts the shared server.
 
 2. **One binary with feature-selected storage**
    - Add feature flags to `zhorten-server`, such as `storage-sled` and
@@ -210,7 +211,6 @@ next agent should verify that:
 
 ### Fly Deliverables
 
-- Fly deployment crate or binary if needed.
 - Fly deployment config.
 - Dockerfile changes or Fly-specific Dockerfile only if the existing Dockerfile
   is not sufficient.
@@ -467,4 +467,3 @@ function-per-request hosting.
   until analytics need it?
 - Should Cloud Run maximum instances stay fixed at `1` for the demo, or should
   the docs show how to raise it after switching to a fully shared storage model?
-
