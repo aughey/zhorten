@@ -66,15 +66,10 @@ pub struct DatabaseArgs {
 #[derive(Args)]
 pub struct McpArgs {
     /// Enable the MCP endpoint at /mcp using this bearer token.
-    #[arg(long, env = "ZHORTEN_MCP", hide_env_values = true, default=None)]
+    #[arg(long, env = "ZHORTEN_MCP", hide_env_values = true)]
     pub mcp: Option<String>,
     /// Allow this hostname to access the MCP endpoint. May be repeated.
-    #[arg(
-        long,
-        env = "ZHORTEN_MCP_HOST",
-        value_delimiter = ',',
-        requires = "mcp"
-    )]
+    #[arg(long, env = "ZHORTEN_MCP_HOST", value_delimiter = ',')]
     pub mcp_host: Vec<String>,
 }
 
