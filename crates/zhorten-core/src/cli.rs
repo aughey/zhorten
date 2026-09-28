@@ -69,7 +69,12 @@ pub struct McpArgs {
     #[arg(long, env = "ZHORTEN_MCP", hide_env_values = true)]
     pub mcp: Option<String>,
     /// Allow this hostname to access the MCP endpoint. May be repeated.
-    #[arg(long, env = "ZHORTEN_MCP_HOST", value_delimiter = ',')]
+    #[arg(
+        long,
+        env = "ZHORTEN_MCP_HOST",
+        value_delimiter = ',',
+        requires = "mcp"
+    )]
     pub mcp_host: Vec<String>,
 }
 
